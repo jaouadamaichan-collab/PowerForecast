@@ -1,0 +1,13 @@
+
+pandas
+numpy
+scikit-learn
+xgboost
+lightgbm
+streamlit
+python-dotenv
+requests
+matplotlib
+seaborn
+jupyter
+#entsoe-py
