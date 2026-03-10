@@ -8,13 +8,13 @@ def preproc_arima(df, column):
     df_nonan = align_start_to_column(df=df, column=column)
 
     #cleaned from outliers
-    df_clean = replace_outliers_with_interpolation(df, limit_low=-350, limit_high=2000)
+    df_clean = replace_outliers_with_interpolation(df_nonan, limit_low=-350, limit_high=2000)
     #standard scaling
-    scaler = StandardScaler().set_output(transform='pandas')
-    df_scaled = scaler.fit_transform(df_clean)
+    # scaler = StandardScaler().set_output(transform='pandas')
+    # df_scaled = scaler.fit_transform(df_clean)
 
     #extract one country
-    df_country = df_scaled['column']
+    df_country = df_clean[column]
 
     #resample for the mean of a day
     df_country_day = df_country.resample('D').mean()
