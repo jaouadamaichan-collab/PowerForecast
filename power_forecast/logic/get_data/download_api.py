@@ -9,27 +9,30 @@ import urllib.request
 import json
 import pandas as pd
 from datetime import datetime
+import time # Import the time module
 
 # ── Villes européennes (ajouter/supprimer selon besoin) ──────────────────────
 CITIES = [
-    {"name": "Paris",      "country": "France",      "lat": 48.8566,  "lon":  2.3522},
     {"name": "Berlin",     "country": "Allemagne",   "lat": 52.5200,  "lon": 13.4050},
-    {"name": "Madrid",     "country": "Espagne",     "lat": 40.4168,  "lon": -3.7038},
-    {"name": "Rome",       "country": "Italie",      "lat": 41.9028,  "lon": 12.4964},
-    {"name": "Amsterdam",  "country": "Pays-Bas",    "lat": 52.3676,  "lon":  4.9041},
-    {"name": "Bruxelles",  "country": "Belgique",    "lat": 50.8503,  "lon":  4.3517},
-    {"name": "Vienne",     "country": "Autriche",    "lat": 48.2082,  "lon": 16.3738},
-    {"name": "Lisbonne",   "country": "Portugal",    "lat": 38.7223,  "lon": -9.1393},
-    {"name": "Stockholm",  "country": "Suède",       "lat": 59.3293,  "lon": 18.0686},
-    {"name": "Varsovie",   "country": "Pologne",     "lat": 52.2297,  "lon": 21.0122},
 ]
+
+# "name": "Paris",      "country": "France",      "lat": 48.8566,  "lon":  2.3522
+# "name": "Berlin",     "country": "Allemagne",   "lat": 52.5200,  "lon": 13.4050
+# "name": "Madrid",     "country": "Espagne",     "lat": 40.4168,  "lon": -3.7038
+# "name": "Rome",       "country": "Italie",      "lat": 41.9028,  "lon": 12.4964
+# "name": "Amsterdam",  "country": "Pays-Bas",    "lat": 52.3676,  "lon":  4.9041
+# "name": "Bruxelles",  "country": "Belgique",    "lat": 50.8503,  "lon":  4.3517
+# "name": "Vienne",     "country": "Autriche",    "lat": 48.2082,  "lon": 16.3738
+# "name": "Lisbonne",   "country": "Portugal",    "lat": 38.7223,  "lon": -9.1393
+# "name": "Stockholm",  "country": "Suède",       "lat": 59.3293,  "lon": 18.0686
+# "name": "Varsovie",   "country": "Pologne",     "lat": 52.2297,  "lon": 21.0122
 
 # ── Sélection active : changer ici pour basculer entre les deux listes ────────
 CITIES_ACTIVE = CITIES                    # ← capitales européennes
 
 
 # ── Plage de dates (format YYYY-MM-DD) ───────────────────────────────────────
-DATE_DEBUT = "2024-01-01"   # ← modifier ici
+DATE_DEBUT = "2015-01-01"   # ← modifier ici
 DATE_FIN   = "2024-12-31"   # ← modifier ici
 
 # ── Fichier de sortie ─────────────────────────────────────────────────────────
@@ -49,41 +52,39 @@ WMO_LABELS = {
 
 def fetch_historical(city: dict, date_start: str, date_end: str) -> pd.DataFrame:
     """Récupère les données historiques et retourne un DataFrame pandas."""
-    variables = [
-        "temperature_2m_max", "temperature_2m_min", "temperature_2m_mean",
-        "precipitation_sum", "windspeed_10m_max", "windgusts_10m_max",
-        "winddirection_10m_dominant", "shortwave_radiation_sum", "weathercode",
+    # Request hourly instantaneous variables
+    hourly_variables = [
+        "temperature_2m", "precipitation", "windspeed_10m", "windgusts_10m",
+        "winddirection_10m", "shortwave_radiation", "weathercode",
     ]
     url = (
         f"https://archive-api.open-meteo.com/v1/archive"
         f"?latitude={city['lat']}&longitude={city['lon']}"
         f"&start_date={date_start}&end_date={date_end}"
-        f"&daily={','.join(variables)}"
+        f"&hourly={','.join(hourly_variables)}"
         f"&timezone=Europe%2FParis"
     )
 
     with urllib.request.urlopen(url, timeout=30) as resp:
         data = json.loads(resp.read())
 
-    daily = data["daily"]
+    hourly_data = data["hourly"]
 
-    # Construire le DataFrame directement depuis le JSON
+    # Construire le DataFrame directement depuis le JSON avec des noms de colonnes adaptés à l'heure
     df = pd.DataFrame({
-        "Date":                   pd.to_datetime(daily["time"]),
+        "Date":                   pd.to_datetime(hourly_data["time"]),
         "Ville":                  city["name"],
         "Pays":                   city["country"],
         "Région":                 city.get("region", ""),
         "Latitude":               city["lat"],
         "Longitude":              city["lon"],
-        "Temp_max (°C)":          daily["temperature_2m_max"],
-        "Temp_min (°C)":          daily["temperature_2m_min"],
-        "Temp_moy (°C)":          daily["temperature_2m_mean"],
-        "Précipitations (mm)":    daily["precipitation_sum"],
-        "Vent_max (km/h)":        daily["windspeed_10m_max"],
-        "Rafales_max (km/h)":     daily["windgusts_10m_max"],
-        "Direction_vent (°)":     daily["winddirection_10m_dominant"],
-        "Ensoleillement (MJ/m²)": daily["shortwave_radiation_sum"],
-        "Code météo (WMO)":       daily["weathercode"],
+        "Température (°C)":       hourly_data["temperature_2m"],
+        "Précipitations (mm)":    hourly_data["precipitation"],
+        "Vent (km/h)":            hourly_data["windspeed_10m"],
+        "Rafales (km/h)":         hourly_data["windgusts_10m"],
+        "Direction_vent ()":     hourly_data["winddirection_10m"],
+        "Ensoleillement (MJ/m)": hourly_data["shortwave_radiation"],
+        "Code météo (WMO)":       hourly_data["weathercode"],
     })
 
     # Colonne conditions lisibles
@@ -99,9 +100,11 @@ def build_dataframe() -> pd.DataFrame:
         try:
             df = fetch_historical(city, DATE_DEBUT, DATE_FIN)
             frames.append(df)
-            print(f"  ✓ {city['name']} ({city['country']}) — {len(df)} jours")
+            # Adjust message to reflect hourly data fetched (24 times days)
+            print(f"  ✓ {city['name']} ({city['country']}) — {len(df) // 24} jours (soit {len(df)} heures)")
         except Exception as e:
-            print(f"  ✗ {city['name']} — Erreur : {e}")
+            print(f"  ✘ {city['name']} — Erreur : {e}")
+        time.sleep(10) # Add a 1-second delay between API calls
 
     if not frames:
         raise RuntimeError("Aucune donnée récupérée.")
@@ -125,13 +128,14 @@ def apercu(df: pd.DataFrame) -> None:
     print(df.dtypes.to_string())
 
     print("\n── Statistiques descriptives ────────────────────────────────────────")
-    num_cols = ["Temp_max (°C)", "Temp_min (°C)", "Temp_moy (°C)",
-                "Précipitations (mm)", "Vent_max (km/h)", "Ensoleillement (MJ/m²)"]
+    # Update num_cols to reflect new hourly column names
+    num_cols = ["Température (°C)",
+                "Précipitations (mm)", "Vent (km/h)", "Ensoleillement (MJ/m)"]
     print(df[num_cols].describe().round(2).to_string())
 
     print("\n── Températures moyennes par pays ───────────────────────────────────")
     print(
-        df.groupby("Pays")["Temp_moy (°C)"]
+        df.groupby("Pays")["Température (°C)"] # Use new temperature column
         .mean().round(2)
         .sort_values(ascending=False)
         .to_string()
@@ -161,7 +165,7 @@ def main():
 
     # ── Export CSV ────────────────────────────────────────────────────────────
     df.to_csv(OUTPUT_FILE, index=False, sep=";", encoding="utf-8-sig",
-              date_format="%Y-%m-%d")
+              date_format="%Y-%m-%d %H:00:00") # Changed date_format for hourly
 
     print(f"\n✅ DataFrame exporté : {OUTPUT_FILE}")
     print(f"   {len(df)} lignes × {len(df.columns)} colonnes")
@@ -185,6 +189,7 @@ Clé API: Créer un compte sur https://transparency.entsoe.eu
     puis demander un token via Mes paramètres → Générer un jeton API
 """
 
+!pip install entsoe-py
 import pandas as pd
 from datetime import datetime, timedelta
 from entsoe import EntsoePandasClient
@@ -193,7 +198,7 @@ from entsoe import EntsoePandasClient
 # CONFIGURATION
 # ─────────────────────────────────────────────
 
-API_KEY = "VOTRE_TOKEN_API_ENTSOE"  # <-- Remplacez ici
+API_KEY = "e886592f-5217-4ba0-af77-e9ff6319599a"  # <-- Remplacez ici VOTRE_TOKEN_API_ENTSOE
 
 # Codes ENTSO-E (bidding zones / pays)
 COUNTRIES = {
