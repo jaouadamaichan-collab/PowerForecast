@@ -13,3 +13,4 @@ EOF
 
 notebooks/
 agents/
+.ipynb
