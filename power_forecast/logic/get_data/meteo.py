@@ -268,5 +268,5 @@ def get_meteo(
     return df_pivot
 
 
-# ── Paramètres à renseigner ───────────────────────────────────────────────────
-df = get_meteo("Berlin", "2024-01-01", "2024-12-31")
+# # ── Paramètres à renseigner ───────────────────────────────────────────────────
+# df = get_meteo("Berlin", "2024-01-01", "2024-12-31")
