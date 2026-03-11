@@ -14,3 +14,5 @@ pycatch22
 pyarrow
 #entsoe-py
 xgboost
+entsoe-py
+holidays

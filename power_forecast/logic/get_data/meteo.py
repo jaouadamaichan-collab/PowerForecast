@@ -41,7 +41,7 @@ def fetch_historical(city: dict, date_start: str, date_end: str) -> pd.DataFrame
         f"?latitude={city['lat']}&longitude={city['lon']}"
         f"&start_date={date_start}&end_date={date_end}"
         f"&hourly={','.join(hourly_variables)}"
-        f"&timezone=Europe%2FParis"
+        f"&timezone=UTC"
     )
 
     with urllib.request.urlopen(url, timeout=30) as resp:
@@ -112,8 +112,6 @@ def apercu(df: pd.DataFrame) -> None:
 
 # ── Colonnes météo & mapping ville → ISO ─────────────────────────────────────
 
-VILLES_DISPONIBLES = list(VILLE_TO_ISO.keys())
-
 
 def preproc_meteo(
     df: pd.DataFrame,
@@ -180,12 +178,14 @@ def preproc_meteo(
     df_pivot.rename(columns={"Date": "timestamp"}, inplace=True)
     df_pivot.sort_values("timestamp", inplace=True)
     df_pivot.reset_index(drop=True, inplace=True)
+    df_pivot["timestamp"] = pd.to_datetime(df_pivot["timestamp"], utc=True)
 
     return df_pivot
 
 
 def get_meteo(
-    city: str | list,
+    df: pd.DataFrame,
+    country: str | list,
     date_start: str,
     date_end: str,
 ) -> pd.DataFrame:
@@ -205,8 +205,8 @@ def get_meteo(
     df = get_meteo(["Berlin", "Paris"], "2024-01-01", "2024-06-30")
     df = get_meteo("all", "2024-01-01", "2024-12-31")
     """
-    cities = VILLES_DISPONIBLES if (isinstance(city, str) and city.lower() == "all") else (
-        [city] if isinstance(city, str) else list(city)
+    cities = VILLES_DISPONIBLES if (isinstance(country, str) and country.lower() == "all") else (
+        [country] if isinstance(country, str) else list(country)
     )
 
     invalides = [c for c in cities if c not in VILLES_DISPONIBLES]
@@ -216,11 +216,14 @@ def get_meteo(
             f"Choisir parmi : {VILLES_DISPONIBLES}"
         )
 
-    print("Récupération des données météo en cours...\n")
     df_raw = build_dataframe(cities, date_start, date_end)
-    df_pivot = preproc_meteo(df_raw, date_start, date_end, city)
-    print(f"\n  → DataFrame prêt : {len(df_pivot)} lignes × {len(df_pivot.columns)} colonnes")
-    return df_pivot
+    df_pivot = preproc_meteo(df_raw, date_start, date_end, country)
+    print(f"\n  → DataFrame prêt : {len(df_pivot)} lignes x {len(df_pivot.columns)} colonnes")
+    df_pivot = df_pivot.set_index("timestamp")
+
+    df_all = df.join(df_pivot, how="left")
+    
+    return df_all
 
 
 # # ── Paramètres à renseigner ───────────────────────────────────────────────────
