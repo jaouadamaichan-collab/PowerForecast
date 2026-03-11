@@ -14,13 +14,8 @@ def create_dataframe_base(filepath: str) -> pd.DataFrame:
     - Values: Price (EUR/MWhe)
     """
     # Load raw CSV
-<<<<<<< HEAD
-    df = pd.read_csv("raw_data/all_countries.csv")
-    
-=======
 
     df = pd.read_csv(filepath)
->>>>>>> 5bde2c0bf8f5ad897aaeb4f564cfd2f5cf4ce3d5
     # Parse UTC datetime & set as index
     df["Datetime (UTC)"] = pd.to_datetime(df["Datetime (UTC)"], utc=True)
 
