@@ -21,6 +21,7 @@ import time
 import logging
 from datetime import datetime
 from pathlib import Path
+from power_forecast.params import *
 
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -40,41 +41,6 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 log = logging.getLogger("entsoe_fetcher")
-
-# ── Constantes ─────────────────────────────────────────────────────────────────
-DEFAULT_API_KEY = "82e51d13-ad8c-44f1-99bd-a000cbcc2ae3"
-DEFAULT_TIMEZONE = "Europe/Paris"
-DEFAULT_START    = "2025-01-01"
-DEFAULT_END      = "2025-06-30"
-DEFAULT_STEP     = "D"          # "H" ou "D"
-DEFAULT_COUNTRIES = ["FR"]
-
-# Catalogue des zones disponibles (code ENTSO-E → label lisible)
-COUNTRY_LABELS = {
-    "FR":    "France",
-    "DE_LU": "Allemagne / Luxembourg",
-    "ES":    "Espagne",
-    "BE":    "Belgique",
-    "NL":    "Pays-Bas",
-    "IT":    "Italie",
-    "CH":    "Suisse",
-    "AT":    "Autriche",
-    "PT":    "Portugal",
-    "PL":    "Pologne",
-    "CZ":    "République Tchèque",
-    "SK":    "Slovaquie",
-    "HU":    "Hongrie",
-    "RO":    "Roumanie",
-    "BG":    "Bulgarie",
-    "GR":    "Grèce",
-    "HR":    "Croatie",
-    "SI":    "Slovénie",
-    "SE":    "Suède",
-    "NO":    "Norvège",
-    "DK":    "Danemark",
-    "FI":    "Finlande",
-    "GB":    "Royaume-Uni",
-}
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -258,10 +224,7 @@ def compute_stats(df: pd.DataFrame) -> pd.DataFrame:
 # Visualisation
 # ══════════════════════════════════════════════════════════════════════════════
 
-PALETTE = [
-    "#2196F3", "#E91E63", "#4CAF50", "#FF9800", "#9C27B0",
-    "#00BCD4", "#FF5722", "#607D8B", "#795548", "#009688",
-]
+
 
 
 def plot_prices(df: pd.DataFrame, step: str, output_dir: Path | None = None) -> None:
