@@ -2,18 +2,11 @@ import urllib.request
 import urllib.parse
 import json
 import pandas as pd
+from power_forecast.params import *
 import time
 
 # ── Correspondance codes WMO ──────────────────────────────────────────────────
-WMO_LABELS = {
-    0: "Ciel dégagé", 1: "Principalement dégagé", 2: "Partiellement nuageux",
-    3: "Couvert", 45: "Brouillard", 48: "Brouillard givrant",
-    51: "Bruine légère", 53: "Bruine modérée", 55: "Bruine dense",
-    61: "Pluie légère", 63: "Pluie modérée", 65: "Pluie forte",
-    71: "Neige légère", 73: "Neige modérée", 75: "Neige forte",
-    80: "Averses légères", 81: "Averses modérées", 82: "Averses violentes",
-    95: "Orage", 96: "Orage avec grêle", 99: "Orage avec forte grêle",
-}
+
 
 
 def geocode_city(city_name: str) -> dict:
@@ -118,44 +111,6 @@ def apercu(df: pd.DataFrame) -> None:
 
 
 # ── Colonnes météo & mapping ville → ISO ─────────────────────────────────────
-COLONNES_METEO = [
-    "Température (°C)",
-    "Précipitations (mm)",
-    "Vent (km/h)",
-    "Rafales (km/h)",
-    "Ensoleillement (MJ/m²)",
-]
-
-VILLE_TO_ISO = {
-    'Autriche': 'AUT',
-    'Belgique': 'BEL',
-    'Bulgarie': 'BGR',
-    'Suisse': 'CHE',
-    'République tchèque': 'CZE',
-    'Allemagne': 'DEU',
-    'Danemark': 'DNK',
-    'Espagne': 'ESP',
-    'Estonie': 'EST',
-    'Finlande': 'FIN',
-    'France': 'FRA',
-    'Grèce': 'GRC',
-    'Croatie': 'HRV',
-    'Hongrie': 'HUN',
-    'Irlande': 'IRL',
-    'Italie': 'ITA',
-    'Lituanie': 'LTU',
-    'Luxembourg': 'LUX',
-    'Lettonie': 'LVA',
-    'Pays-Bas': 'NLD',
-    'Norvège': 'NOR',
-    'Pologne': 'POL',
-    'Portugal': 'PRT',
-    'Roumanie': 'ROU',
-    'Serbie': 'SRB',
-    'Slovaquie': 'SVK',
-    'Slovénie': 'SVN',
-    'Suède': 'SWE',
-}
 
 VILLES_DISPONIBLES = list(VILLE_TO_ISO.keys())
 
@@ -268,5 +223,5 @@ def get_meteo(
     return df_pivot
 
 
-# ── Paramètres à renseigner ───────────────────────────────────────────────────
-df = get_meteo("Berlin", "2024-01-01", "2024-12-31")
+# # ── Paramètres à renseigner ───────────────────────────────────────────────────
+# df = get_meteo("Berlin", "2024-01-01", "2024-12-31")
