@@ -6,7 +6,8 @@ from power_forecast.logic.get_data.time_features import (
     add_temporal_features,
     add_public_holidays,
     add_target_horizon_features,
-    add_catch24_features)
+    add_catch24_features,
+    add_lag_and_contexte_features)
 from power_forecast.logic.utils.others import load_df, save_df
 from power_forecast.logic.get_data.meteo import get_meteo
 from power_forecast.params import *
@@ -97,11 +98,11 @@ def build_feature_dataframe(
     if load_from_pickle:
         print("⚡ Loading from pickle — skipping pipeline...")
         return load_df(save_name)
-    
+
     iso_objective = VILLE_TO_ISO.get(country_objective, None)
     if iso_objective is None:
         raise ValueError(f"Country '{country_objective}' not found in VILLE_TO_ISO mapping. Please check the country name or update the mapping.")
-    
+
     # ── Step 1: Load ──────────────────────────────────────────────────────────
     print("\n── Step 1: Load raw data ────────────────────────────────────────")
     df = create_dataframe_base(filepath)
@@ -119,20 +120,25 @@ def build_feature_dataframe(
     print("\n── Step 4: Temporal features ────────────────────────────────────")
     df = add_temporal_features(df)
     df = add_public_holidays(df, country=iso_objective)
-    
+
     # ── Step 5: Meteo features ─────────────────────────────────────────────
     print("\n── Step 5: Meteo features ───────────────────────────────────────")
     date_start = df.index.min().strftime("%Y-%m-%d")
     date_end = (df.index.max() + pd.Timedelta(days=1+target_day_distance)).strftime("%Y-%m-%d")
     df = get_meteo(df, country=country_objective, date_start=date_start, date_end=date_end)
-    
+
     # ── Step 6: Add features based on target distance ───────────────────────────────────────
     print("\n── Step 6: Add features based on target distance ────────────────")
     df = add_target_horizon_features(df, iso_objective=iso_objective, target_day_distance=target_day_distance)
-      
-    # ── Step 7: catch24 features ──────────────────────────────────────────────
+
+    # ── Step 7: Add lag and context features ───────────────────────────────────────
+    print("\n── Step 7: Add lag and context feature ────────────────")
+    df = add_lag_and_contexte_features(df, iso_objective=iso_objective)
+
+    # ── Step 8: catch24 features ──────────────────────────────────────────────
     print(f"\n── Step 7: catch24 features for {country_objective} ──────────────────")
     df = add_catch24_features(df, window=window, step=step, time_interval=time_interval, country=iso_objective)
+
     df = df.drop(columns=[
         'hour',
         'day_of_week',
@@ -141,7 +147,7 @@ def build_feature_dataframe(
         'year',
         'day_of_year'
     ])
-    #eliminate 
+
     if drop_nan:
         df_clean = df.dropna()
         print(f"Rows dropped: {len(df) - len(df_clean)} to avoid nan due to target distance and catch22 features")

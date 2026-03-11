@@ -212,11 +212,32 @@ def add_target_horizon_features(df: pd.DataFrame, iso_objective: str, target_day
 
     # --- Price lag anchors (safe: looking into the past) ---
     # These are NOT shifted forward — they look backwards from current t
-    df[f"{iso_objective}_price_lag_1day"]   = df[iso_objective].shift(24)
-    df[f"{iso_objective}_price_lag_2day"]   = df[iso_objective].shift(48)
-    df[f"{iso_objective}_price_lag_3day"]   = df[iso_objective].shift(72)
-    df[f"{iso_objective}_price_lag_4day"]   = df[iso_objective].shift(96)
-    df[f"{iso_objective}_price_lag_1week"]  = df[iso_objective].shift(7*24)
+    # df[f"{iso_objective}_price_lag_1day"]   = df[iso_objective].shift(24)
+    # df[f"{iso_objective}_price_lag_2day"]   = df[iso_objective].shift(48)
+    # df[f"{iso_objective}_price_lag_3day"]   = df[iso_objective].shift(72)
+    # df[f"{iso_objective}_price_lag_4day"]   = df[iso_objective].shift(96)
+    # df[f"{iso_objective}_price_lag_1week"]  = df[iso_objective].shift(7*24)
+
+    return df
+
+def add_lag_and_contexte_features(df: pd.DataFrame, iso_objective: str):
+
+    lags = [
+        1, 2, 3,        # court terme
+        6, 12, 24,      # intra-journalier
+        48, 72,         # 2-3 jours
+        168, 336        # 1, 2 semaines (même heure)
+        ]
+    for lag in lags:
+        df[f'lag_{lag}h'] = df[iso_objective].shift(lag)
+
+    for w in [6, 12, 24, 48]:
+        base = df[iso_objective].shift(1)  # shift(1) anti-leakage
+        df[f'roll_mean_{w}h'] = base.rolling(w).mean()
+        df[f'roll_std_{w}h']  = base.rolling(w).std()
+        df[f'roll_min_{w}h']  = base.rolling(w).min()
+        df[f'roll_max_{w}h']  = base.rolling(w).max()
+        df[f'roll_range_{w}h']= df[f'roll_max_{w}h'] - df[f'roll_min_{w}h']
 
     return df
 
