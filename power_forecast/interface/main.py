@@ -1,6 +1,6 @@
 import pandas as pd
 
-def train_test_split_ts(series, split_ratio: float = 0.2):
+def train_test_split_ts(series, split_ratio: float = 0.02):
     """
     Split a time series into training and testing sets while preserving chronological order.
 
