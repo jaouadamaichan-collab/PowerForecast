@@ -127,13 +127,36 @@ COLONNES_METEO = [
 ]
 
 VILLE_TO_ISO = {
-    "Berlin":    "DE",
-    "Bruxelles": "BE",
-    "Lisbonne":  "PT",
-    "Madrid":    "ES",
-    "Paris":     "FR",
-    "Vienne":    "AT",
+    'Autriche': 'AUT',
+    'Belgique': 'BEL',
+    'Bulgarie': 'BGR',
+    'Suisse': 'CHE',
+    'République tchèque': 'CZE',
+    'Allemagne': 'DEU',
+    'Danemark': 'DNK',
+    'Espagne': 'ESP',
+    'Estonie': 'EST',
+    'Finlande': 'FIN',
+    'France': 'FRA',
+    'Grèce': 'GRC',
+    'Croatie': 'HRV',
+    'Hongrie': 'HUN',
+    'Irlande': 'IRL',
+    'Italie': 'ITA',
+    'Lituanie': 'LTU',
+    'Luxembourg': 'LUX',
+    'Lettonie': 'LVA',
+    'Pays-Bas': 'NLD',
+    'Norvège': 'NOR',
+    'Pologne': 'POL',
+    'Portugal': 'PRT',
+    'Roumanie': 'ROU',
+    'Serbie': 'SRB',
+    'Slovaquie': 'SVK',
+    'Slovénie': 'SVN',
+    'Suède': 'SWE',
 }
+
 VILLES_DISPONIBLES = list(VILLE_TO_ISO.keys())
 
 
