@@ -1,35 +1,8 @@
 import urllib.request
+import urllib.parse
 import json
 import pandas as pd
-from datetime import datetime
-import time # Import the time module
-
-# ── Villes européennes (ajouter/supprimer selon besoin) ──────────────────────
-CITIES = [
-    {"name": "Berlin",     "country": "Allemagne",   "lat": 52.5200,  "lon": 13.4050},
-]
-
-# "name": "Paris",      "country": "France",      "lat": 48.8566,  "lon":  2.3522
-# "name": "Berlin",     "country": "Allemagne",   "lat": 52.5200,  "lon": 13.4050
-# "name": "Madrid",     "country": "Espagne",     "lat": 40.4168,  "lon": -3.7038
-# "name": "Rome",       "country": "Italie",      "lat": 41.9028,  "lon": 12.4964
-# "name": "Amsterdam",  "country": "Pays-Bas",    "lat": 52.3676,  "lon":  4.9041
-# "name": "Bruxelles",  "country": "Belgique",    "lat": 50.8503,  "lon":  4.3517
-# "name": "Vienne",     "country": "Autriche",    "lat": 48.2082,  "lon": 16.3738
-# "name": "Lisbonne",   "country": "Portugal",    "lat": 38.7223,  "lon": -9.1393
-# "name": "Stockholm",  "country": "Suède",       "lat": 59.3293,  "lon": 18.0686
-# "name": "Varsovie",   "country": "Pologne",     "lat": 52.2297,  "lon": 21.0122
-
-# ── Sélection active : changer ici pour basculer entre les deux listes ────────
-CITIES_ACTIVE = CITIES                    # ← capitales européennes
-
-
-# ── Plage de dates (format YYYY-MM-DD) ───────────────────────────────────────
-DATE_DEBUT = "2015-01-01"   # ← modifier ici
-DATE_FIN   = "2024-12-31"   # ← modifier ici
-
-# ── Fichier de sortie ─────────────────────────────────────────────────────────
-OUTPUT_FILE = "meteo_historique_europe.csv"
+import time
 
 # ── Correspondance codes WMO ──────────────────────────────────────────────────
 WMO_LABELS = {
@@ -43,9 +16,29 @@ WMO_LABELS = {
 }
 
 
+def geocode_city(city_name: str) -> dict:
+    """Recherche les coordonnées et le pays d'une ville via l'API Open-Meteo Geocoding."""
+    url = (
+        f"https://geocoding-api.open-meteo.com/v1/search"
+        f"?name={urllib.parse.quote(city_name)}&count=1&language=fr&format=json"
+    )
+    with urllib.request.urlopen(url, timeout=10) as resp:
+        data = json.loads(resp.read())
+
+    if not data.get("results"):
+        raise ValueError(f"Ville introuvable : '{city_name}'")
+
+    result = data["results"][0]
+    return {
+        "name":    result["name"],
+        "country": result.get("country_code", "??"),
+        "lat":     result["latitude"],
+        "lon":     result["longitude"],
+    }
+
+
 def fetch_historical(city: dict, date_start: str, date_end: str) -> pd.DataFrame:
     """Récupère les données historiques et retourne un DataFrame pandas."""
-    # Request hourly instantaneous variables
     hourly_variables = [
         "temperature_2m", "precipitation", "windspeed_10m", "windgusts_10m",
         "winddirection_10m", "shortwave_radiation", "weathercode",
@@ -63,50 +56,41 @@ def fetch_historical(city: dict, date_start: str, date_end: str) -> pd.DataFrame
 
     hourly_data = data["hourly"]
 
-    # Construire le DataFrame directement depuis le JSON avec des noms de colonnes adaptés à l'heure
     df = pd.DataFrame({
         "Date":                   pd.to_datetime(hourly_data["time"]),
         "Ville":                  city["name"],
         "Pays":                   city["country"],
-        "Région":                 city.get("region", ""),
-        "Latitude":               city["lat"],
-        "Longitude":              city["lon"],
         "Température (°C)":       hourly_data["temperature_2m"],
         "Précipitations (mm)":    hourly_data["precipitation"],
         "Vent (km/h)":            hourly_data["windspeed_10m"],
         "Rafales (km/h)":         hourly_data["windgusts_10m"],
-        "Direction_vent ()":     hourly_data["winddirection_10m"],
-        "Ensoleillement (MJ/m)": hourly_data["shortwave_radiation"],
+        "Ensoleillement (MJ/m²)": hourly_data["shortwave_radiation"],
         "Code météo (WMO)":       hourly_data["weathercode"],
     })
 
-    # Colonne conditions lisibles
     df["Conditions"] = df["Code météo (WMO)"].map(WMO_LABELS).fillna("Inconnu")
 
     return df
 
 
-def build_dataframe() -> pd.DataFrame:
-    """Agrège les données de toutes les villes en un seul DataFrame."""
+def build_dataframe(city_names: list, date_debut: str, date_fin: str) -> pd.DataFrame:
+    """Géocode les villes, récupère les données et retourne un DataFrame agrégé."""
     frames = []
-    for city in CITIES_ACTIVE:
+    for name in city_names:
         try:
-            df = fetch_historical(city, DATE_DEBUT, DATE_FIN)
+            city = geocode_city(name)
+            df = fetch_historical(city, date_debut, date_fin)
             frames.append(df)
-            # Adjust message to reflect hourly data fetched (24 times days)
             print(f"  ✓ {city['name']} ({city['country']}) — {len(df) // 24} jours (soit {len(df)} heures)")
         except Exception as e:
-            print(f"  ✘ {city['name']} — Erreur : {e}")
-        time.sleep(10) # Add a 1-second delay between API calls
+            print(f"  ✘ {name} — Erreur : {e}")
+        time.sleep(1)
 
     if not frames:
         raise RuntimeError("Aucune donnée récupérée.")
 
-    # Concaténation + typage
     df_all = pd.concat(frames, ignore_index=True)
     df_all["Code météo (WMO)"] = df_all["Code météo (WMO)"].astype("Int64")
-
-    # Tri par date et ville
     df_all = df_all.sort_values(["Date", "Ville"]).reset_index(drop=True)
 
     return df_all
@@ -121,50 +105,168 @@ def apercu(df: pd.DataFrame) -> None:
     print(df.dtypes.to_string())
 
     print("\n── Statistiques descriptives ────────────────────────────────────────")
-    # Update num_cols to reflect new hourly column names
-    num_cols = ["Température (°C)",
-                "Précipitations (mm)", "Vent (km/h)", "Ensoleillement (MJ/m)"]
+    num_cols = ["Température (°C)", "Précipitations (mm)", "Vent (km/h)", "Ensoleillement (MJ/m²)"]
     print(df[num_cols].describe().round(2).to_string())
 
-    print("\n── Températures moyennes par pays ───────────────────────────────────")
+    print("\n── Températures moyennes par pays (ISO) ─────────────────────────────")
     print(
-        df.groupby("Pays")["Température (°C)"] # Use new temperature column
+        df.groupby("Pays")["Température (°C)"]
         .mean().round(2)
         .sort_values(ascending=False)
         .to_string()
     )
 
 
-def main():
-    # Validation des dates
-    try:
-        d1 = datetime.strptime(DATE_DEBUT, "%Y-%m-%d")
-        d2 = datetime.strptime(DATE_FIN,   "%Y-%m-%d")
-    except ValueError:
-        print("❌ Format de date invalide. Utilisez YYYY-MM-DD.")
-        return
-    if d1 > d2:
-        print("❌ DATE_DEBUT doit être antérieure à DATE_FIN.")
-        return
+# ── Colonnes météo & mapping ville → ISO ─────────────────────────────────────
+COLONNES_METEO = [
+    "Température (°C)",
+    "Précipitations (mm)",
+    "Vent (km/h)",
+    "Rafales (km/h)",
+    "Ensoleillement (MJ/m²)",
+]
 
-    print(f"Période : {DATE_DEBUT} → {DATE_FIN}")
-    print(f"Villes  : {len(CITIES_ACTIVE)}\n")
+VILLE_TO_ISO = {
+    'Autriche': 'AUT',
+    'Belgique': 'BEL',
+    'Bulgarie': 'BGR',
+    'Suisse': 'CHE',
+    'République tchèque': 'CZE',
+    'Allemagne': 'DEU',
+    'Danemark': 'DNK',
+    'Espagne': 'ESP',
+    'Estonie': 'EST',
+    'Finlande': 'FIN',
+    'France': 'FRA',
+    'Grèce': 'GRC',
+    'Croatie': 'HRV',
+    'Hongrie': 'HUN',
+    'Irlande': 'IRL',
+    'Italie': 'ITA',
+    'Lituanie': 'LTU',
+    'Luxembourg': 'LUX',
+    'Lettonie': 'LVA',
+    'Pays-Bas': 'NLD',
+    'Norvège': 'NOR',
+    'Pologne': 'POL',
+    'Portugal': 'PRT',
+    'Roumanie': 'ROU',
+    'Serbie': 'SRB',
+    'Slovaquie': 'SVK',
+    'Slovénie': 'SVN',
+    'Suède': 'SWE',
+}
 
-    # ── Construction du DataFrame ─────────────────────────────────────────────
-    df = build_dataframe()
-
-    # ── Aperçu console ────────────────────────────────────────────────────────
-    apercu(df)
-
-    # ── Export CSV ────────────────────────────────────────────────────────────
-    # df.to_csv(OUTPUT_FILE, index=False, sep=";", encoding="utf-8-sig",
-    #           date_format="%Y-%m-%d %H:00:00") # Changed date_format for hourly
-
-    # print(f"\n✅ DataFrame exporté : {OUTPUT_FILE}")
-    # print(f"   {len(df)} lignes × {len(df.columns)} colonnes")
-
-    return df   # utile en notebook Jupyter
+VILLES_DISPONIBLES = list(VILLE_TO_ISO.keys())
 
 
-if __name__ == "__main__":
-    df = main()
+def preproc_meteo(
+    df: pd.DataFrame,
+    date_start: str,
+    date_end: str,
+    city: str | list,
+) -> pd.DataFrame:
+    """
+    Construit un DataFrame pivotté avec une ligne par date et des colonnes
+    nommées  <code_ISO>_<indicateur>  pour chaque ville demandée.
+
+    Paramètres
+    ----------
+    df         : DataFrame produit par build_dataframe().
+    date_start : Date de début au format 'YYYY-MM-DD' (incluse).
+    date_end   : Date de fin   au format 'YYYY-MM-DD' (incluse).
+    city       : Ville(s) parmi VILLES_DISPONIBLES, ou "all".
+    """
+    df = df.copy()
+    df["Date"] = pd.to_datetime(df["Date"])
+
+    if isinstance(city, str):
+        cities = VILLES_DISPONIBLES if city.lower() == "all" else [city]
+    else:
+        cities = list(city)
+
+    invalides = [c for c in cities if c not in VILLES_DISPONIBLES]
+    if invalides:
+        raise ValueError(
+            f"Ville(s) inconnue(s) : {invalides}. "
+            f"Choisir parmi : {VILLES_DISPONIBLES}"
+        )
+
+    mask = (
+        (df["Date"] >= pd.to_datetime(date_start))
+        & (df["Date"] <= pd.to_datetime(date_end))
+        & (df["Ville"].isin(cities))
+    )
+    df_filtered = df.loc[mask, ["Date", "Ville"] + COLONNES_METEO].copy()
+
+    if df_filtered.empty:
+        raise ValueError(
+            f"Aucune donnée trouvée pour la période {date_start} → {date_end} "
+            f"et les villes {cities}."
+        )
+
+    df_filtered["Ville"] = df_filtered["Ville"].map(VILLE_TO_ISO)
+    cities_iso = [VILLE_TO_ISO[c] for c in cities]
+
+    df_pivot = df_filtered.pivot(
+        index="Date",
+        columns="Ville",
+        values=COLONNES_METEO,
+    )
+    df_pivot.columns = [f"{iso}_{indicateur}" for indicateur, iso in df_pivot.columns]
+
+    cols_ordonnes = [
+        f"{iso}_{ind}"
+        for iso in cities_iso
+        for ind in COLONNES_METEO
+    ]
+    df_pivot = df_pivot[cols_ordonnes]
+    df_pivot.reset_index(inplace=True)
+    df_pivot.rename(columns={"Date": "timestamp"}, inplace=True)
+    df_pivot.sort_values("timestamp", inplace=True)
+    df_pivot.reset_index(drop=True, inplace=True)
+
+    return df_pivot
+
+
+def get_meteo(
+    city: str | list,
+    date_start: str,
+    date_end: str,
+) -> pd.DataFrame:
+    """
+    Pipeline complet : récupère les données météo et retourne directement
+    le DataFrame pivotté prêt à l'emploi.
+
+    Paramètres
+    ----------
+    city       : Ville(s) parmi VILLES_DISPONIBLES, ou "all".
+    date_start : Date de début au format 'YYYY-MM-DD' (incluse).
+    date_end   : Date de fin   au format 'YYYY-MM-DD' (incluse).
+
+    Exemple
+    -------
+    df = get_meteo("Berlin", "2024-01-01", "2024-12-31")
+    df = get_meteo(["Berlin", "Paris"], "2024-01-01", "2024-06-30")
+    df = get_meteo("all", "2024-01-01", "2024-12-31")
+    """
+    cities = VILLES_DISPONIBLES if (isinstance(city, str) and city.lower() == "all") else (
+        [city] if isinstance(city, str) else list(city)
+    )
+
+    invalides = [c for c in cities if c not in VILLES_DISPONIBLES]
+    if invalides:
+        raise ValueError(
+            f"Ville(s) inconnue(s) : {invalides}. "
+            f"Choisir parmi : {VILLES_DISPONIBLES}"
+        )
+
+    print("Récupération des données météo en cours...\n")
+    df_raw = build_dataframe(cities, date_start, date_end)
+    df_pivot = preproc_meteo(df_raw, date_start, date_end, city)
+    print(f"\n  → DataFrame prêt : {len(df_pivot)} lignes × {len(df_pivot.columns)} colonnes")
+    return df_pivot
+
+
+# ── Paramètres à renseigner ───────────────────────────────────────────────────
+df = get_meteo("Berlin", "2024-01-01", "2024-12-31")
