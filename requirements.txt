@@ -11,4 +11,5 @@ matplotlib
 seaborn
 jupyter
 pycatch22 
+pyarrow
 #entsoe-py
