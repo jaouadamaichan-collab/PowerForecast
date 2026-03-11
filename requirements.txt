@@ -1,6 +1,5 @@
 
-pandas
-numpy
+pandas==2.3.3
 scikit-learn
 xgboost
 lightgbm
@@ -16,3 +15,7 @@ pyarrow
 xgboost
 entsoe-py
 holidays
+tensorflow==2.16.2
+keras==3.13.2
+numpy==1.26.4
+# tensorflow-metal; sys_platform == "darwin" and platform_machine == "arm64"
