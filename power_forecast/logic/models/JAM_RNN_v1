@@ -1,0 +1,453 @@
+"""
+Power Forecast - Modèle LSTM Optimisé pour la Prévision de Consommation Électrique
+====================================================================================
+Améliorations apportées par rapport à la version initiale :
+
+        [FENÊTRE D'ENTRÉE]
+    1. INPUT_LENGTH augmenté de 2 semaines à 4 semaines (672 pas de temps).
+       Les cycles hebdomadaires et bi-hebdomadaires sont des patterns importants.
+
+    [ARCHITECTURE]
+    2. LSTM empilé (2 couches au lieu de 1) : la première couche extrait des features
+       de bas niveau, la seconde capture des dépendances plus abstraites et longues.
+    3. Dropout (0.2) après chaque couche LSTM pour réduire l'overfitting.
+    4. Couche Dense intermédiaire (32 neurones) avant la sortie pour une meilleure
+       capacité de projection.
+    5. Régularisation L1L2 allégée (0.01 au lieu de 0.05) car le Dropout prend
+       déjà en charge la régularisation.
+
+    [ENTRAÎNEMENT]
+    6. ReduceLROnPlateau : divise le learning rate par 2 si la val_loss stagne
+       pendant 5 époques, permettant un affinement automatique.
+    7. Early stopping avec patience augmentée à 15 époques pour laisser au modèle
+       le temps de bénéficier des réductions de lr.
+    8. Plus d'époques max (100 au lieu de 50).
+    9. Batch size réduit à 16 pour une meilleure généralisation (gradient plus bruité
+        mais plus informatif).
+"""
+
+import pandas as pd
+import numpy as np
+import tensorflow as tf
+import matplotlib.pyplot as plt
+from typing import List, Tuple
+
+from power_forecast.logic.get_data.download_api import build_feature_dataframe
+from tensorflow.keras import models, layers, Input, optimizers
+from tensorflow.keras.regularizers import L1L2
+from tensorflow.keras.layers import Normalization
+from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
+
+%load_ext autoreload
+%autoreload 2
+pd.set_option('display.max_columns', None)
+
+# ================================================================= #
+# 1. CHARGEMENT DES DONNÉES                                         #
+# ================================================================= #
+
+# Chargement du DataFrame de features à partir d'un CSV multi-pays.
+# `load_from_pickle=False` force un rechargement complet plutôt que d'utiliser un cache.
+df = build_feature_dataframe('raw_data/all_countries.csv', load_from_pickle=False)
+
+
+# ================================================================= #
+# 2. CONFIGURATION GLOBALE                                          #
+# ================================================================= #
+
+TARGET = 'FRA'
+N_TARGETS = 1
+N_FEATURES = df.shape[1]   # Mis à jour dynamiquement après encodage
+
+# Folds : 2 ans de données horaires, un nouveau fold tous les trimestres
+FOLD_LENGTH      = 24 * 365 * 2   # 17 520 pas de temps
+FOLD_STRIDE      = 24 * 91        # 2 184 pas de temps (1 trimestre)
+TRAIN_TEST_RATIO = 0.7
+
+# OPTIMISATION : fenêtre étendue à 4 semaines pour capturer les cycles hebdomadaires
+INPUT_LENGTH  = 24 * 28   # 4 semaines = 672 pas de temps (vs 336 avant)
+OUTPUT_LENGTH = 1
+SEQUENCE_STRIDE = 24      # Pas d'1 jour entre chaque séquence
+
+print(f"\nN_FEATURES  = {N_FEATURES}")
+print(f"INPUT_LENGTH = {INPUT_LENGTH} pas = {INPUT_LENGTH//24} jours = {INPUT_LENGTH//24//7} semaines")
+
+# ================================================================= #
+# 3. FONCTIONS DE DÉCOUPAGE (inchangées)                            #
+# ================================================================= #
+
+def get_folds(df: pd.DataFrame, fold_length: int, fold_stride: int) -> List[pd.DataFrame]:
+    """
+    Parcourt un DataFrame de série temporelle pour en extraire des folds de longueur fixe.
+
+    La fenêtre avance de `fold_stride` lignes à chaque itération.
+    Toute fenêtre qui dépasserait la fin du DataFrame est ignorée.
+
+    Args:
+        df (pd.DataFrame): Le DataFrame complet, de forme (n_pas, n_features).
+        fold_length (int): Nombre de pas de temps dans chaque fold.
+        fold_stride (int): Nombre de pas à avancer entre deux folds.
+
+    Returns:
+        List[pd.DataFrame]: Liste de DataFrames, chacun représentant un fold.
+    """
+    folds = []
+    for idx in range(0, len(df), fold_stride):
+        if (idx + fold_length) > len(df):
+            break
+        folds.append(df.iloc[idx:idx + fold_length, :])
+    return folds
+
+
+def train_test_split(fold: pd.DataFrame, train_test_ratio: float,
+                     input_length: int) -> Tuple[pd.DataFrame]:
+    """
+    Divise un fold en ensemble d'entraînement et de test.
+
+    Le test commence `input_length` lignes avant la fin du train pour garantir
+    une première fenêtre d'entrée complète (chevauchement intentionnel).
+
+    Args:
+        fold (pd.DataFrame): Fold de pas de temps.
+        train_test_ratio (float): Proportion allouée à l'entraînement.
+        input_length (int): Longueur de chaque séquence X_i.
+
+    Returns:
+        Tuple[pd.DataFrame]: (fold_train, fold_test)
+    """
+    last_train_idx  = round(train_test_ratio * len(fold))
+    fold_train      = fold.iloc[0:last_train_idx, :]
+    first_test_idx  = last_train_idx - input_length
+    fold_test       = fold.iloc[first_test_idx:, :]
+    return (fold_train, fold_test)
+
+
+# GAP de 24h entre la fin de X_i et le début de y_i (prévision day-ahead)
+DAY_AHEAD_GAP = 24
+
+
+def get_X_y_strides(fold: pd.DataFrame, input_length: int, output_length: int,
+                    sequence_stride: int) -> Tuple[np.array]:
+    """
+    Construit un jeu de données en faisant glisser une fenêtre à pas fixe sur le fold.
+
+    Un décalage de 24h (DAY_AHEAD_GAP) est appliqué entre la fin de X_i et le début
+    de y_i, conformément à l'objectif métier de prévision day-ahead :
+    "connaissant les données jusqu'à t, prédire la consommation à t+24h."
+
+    Schéma temporel :
+        [--- X_i (input_length) ---][--- gap 24h ---][y_i]
+
+    Args:
+        fold (pd.DataFrame): Fold de la série temporelle.
+        input_length (int): Longueur de chaque fenêtre X_i.
+        output_length (int): Longueur de chaque cible y_i.
+        sequence_stride (int): Pas entre le début de deux séquences consécutives.
+
+    Returns:
+        Tuple[np.array]: (X, y) avec X de forme (n_seq, input_length, n_features)
+    """
+    X, y = [], []
+    for i in range(0, len(fold), sequence_stride):
+        # On s'arrête si la fenêtre complète (X + gap + y) dépasse la longueur du fold
+        if (i + input_length + DAY_AHEAD_GAP + output_length) > len(fold):
+            break
+        X.append(fold.iloc[i:i + input_length, :])
+        # La cible est décalée de 24h après la fin de X_i
+        y_start = i + input_length + DAY_AHEAD_GAP
+        y.append(fold.iloc[y_start:y_start + output_length, :][[TARGET]])
+    return (np.array(X), np.array(y))
+
+
+# ================================================================= #
+# 6. MODÈLE LSTM OPTIMISÉ                                           #
+# ================================================================= #
+
+def init_model(X_train: np.array, y_train: np.array) -> tf.keras.Model:
+    """
+    Construit et compile le modèle LSTM optimisé.
+
+    Améliorations par rapport à la version initiale :
+
+    Architecture :
+        - 2 couches LSTM empilées (128 + 64 unités) au lieu d'une seule.
+          La première couche (return_sequences=True) passe toute la séquence
+          à la deuxième, qui en extrait un résumé final.
+        - Dropout(0.2) après chaque LSTM pour limiter l'overfitting.
+        - Dense(32) intermédiaire avec activation ReLU avant la sortie,
+          pour une meilleure capacité de projection non-linéaire.
+        - Régularisation L1L2 allégée (0.01) car le Dropout est déjà actif.
+
+    Compilation :
+        - Loss : MSE
+        - Optimiseur : Adam (lr initial = 0.001)
+        - Métrique : MAE
+
+    Args:
+        X_train (np.array): Entrées d'entraînement (n_samples, input_length, n_features).
+        y_train (np.array): Cibles d'entraînement (n_samples, output_length, 1).
+
+    Returns:
+        tf.keras.Model: Modèle Keras compilé.
+    """
+    # Normalisation adaptée sur les données d'entraînement
+    normalizer = Normalization()
+    normalizer.adapt(X_train)
+
+    model = models.Sequential([
+        Input(shape=X_train[0].shape),
+        normalizer,
+
+        # --- Couche LSTM 1 : extrait des patterns de bas niveau ---
+        # return_sequences=True : on passe toute la séquence à la couche suivante
+        layers.LSTM(
+            128,
+            activation='tanh',
+            return_sequences=True,
+            kernel_regularizer=L1L2(l1=0.01, l2=0.01)
+        ),
+        layers.Dropout(0.2),   # Désactive 20% des neurones aléatoirement à chaque batch
+
+        # --- Couche LSTM 2 : capture des dépendances de plus haut niveau ---
+        layers.LSTM(
+            64,
+            activation='tanh',
+            return_sequences=False,
+            kernel_regularizer=L1L2(l1=0.01, l2=0.01)
+        ),
+        layers.Dropout(0.2),
+
+        # --- Couche Dense intermédiaire : projection non-linéaire ---
+        layers.Dense(32, activation='relu'),
+
+        # --- Sortie linéaire pour la régression ---
+        layers.Dense(y_train.shape[1], activation='linear'),
+    ])
+
+    model.compile(
+        loss='mse',
+        optimizer=optimizers.Adam(learning_rate=0.001),
+        metrics=["mae"]
+    )
+    return model
+
+
+# ================================================================= #
+# 5. ENTRAÎNEMENT OPTIMISÉ                                          #
+# ================================================================= #
+
+def fit_model(model: tf.keras.Model, X_train: np.array, y_train: np.array,
+              verbose: int = 1) -> Tuple[tf.keras.Model, tf.keras.callbacks.History]:
+    """
+    Entraîne le modèle avec early stopping et réduction adaptative du learning rate.
+
+    Améliorations par rapport à la version initiale :
+
+        - ReduceLROnPlateau : divise lr par 2 si val_loss ne s'améliore pas pendant
+          5 époques. Permet un affinement progressif sans fixer un lr trop bas dès le départ.
+        - Early stopping avec patience=15 (au lieu de 10) pour laisser au scheduler
+          le temps de réduire le lr avant d'arrêter.
+        - 100 époques max (au lieu de 50).
+        - Batch size réduit à 16 pour des gradients plus informatifs.
+
+    Args:
+        model (tf.keras.Model): Modèle Keras compilé.
+        X_train (np.array): Données d'entrée d'entraînement.
+        y_train (np.array): Cibles d'entraînement.
+        verbose (int): 0=silencieux, 1=barre de progression.
+
+    Returns:
+        Tuple[tf.keras.Model, History]: Modèle entraîné + historique d'entraînement.
+    """
+    callbacks = [
+        # Arrêt anticipé si val_loss ne s'améliore plus pendant 15 époques
+        EarlyStopping(
+            monitor='val_loss',
+            patience=15,
+            mode='min',
+            restore_best_weights=True
+        ),
+        # Réduction du lr si val_loss stagne pendant 5 époques (lr divisé par 2)
+        ReduceLROnPlateau(
+            monitor='val_loss',
+            factor=0.5,
+            patience=5,
+            min_lr=1e-6,
+            verbose=1
+        ),
+    ]
+
+    history = model.fit(
+        X_train, y_train,
+        validation_split=0.3,
+        shuffle=False,          # Préserver l'ordre temporel
+        batch_size=16,          # Batch plus petit → gradient plus bruité mais plus informatif
+        epochs=100,
+        callbacks=callbacks,
+        verbose=verbose
+    )
+    return model, history
+
+
+# ================================================================= #
+# 6. VISUALISATION                                                  #
+# ================================================================= #
+
+def plot_history(history: tf.keras.callbacks.History):
+    """
+    Affiche les courbes de perte (MSE) et de métrique (MAE) pour train et validation.
+
+    Affiche également le learning rate au fil des époques pour visualiser les
+    réductions appliquées par ReduceLROnPlateau.
+
+    Args:
+        history (tf.keras.callbacks.History): Objet History retourné par model.fit().
+
+    Returns:
+        np.array: Tableau de trois objets Axes matplotlib.
+    """
+    fig, ax = plt.subplots(1, 3, figsize=(24, 6))
+
+    # MSE
+    ax[0].plot(history.history['loss'], label='Train')
+    ax[0].plot(history.history['val_loss'], label='Validation')
+    ax[0].set_title('Perte MSE')
+    ax[0].set_ylabel('MSE')
+    ax[0].set_xlabel('Époque')
+    ax[0].legend()
+    ax[0].grid(linewidth=0.5)
+
+    # MAE
+    ax[1].plot(history.history['mae'], label='Train')
+    ax[1].plot(history.history['val_mae'], label='Validation')
+    ax[1].set_title('Métrique MAE')
+    ax[1].set_ylabel('MAE')
+    ax[1].set_xlabel('Époque')
+    ax[1].legend()
+    ax[1].grid(linewidth=0.5)
+
+    # Learning rate (si disponible)
+    if 'lr' in history.history:
+        ax[2].plot(history.history['lr'], color='orange', label='Learning Rate')
+        ax[2].set_title('Learning Rate')
+        ax[2].set_ylabel('LR')
+        ax[2].set_xlabel('Époque')
+        ax[2].set_yscale('log')
+        ax[2].legend()
+        ax[2].grid(linewidth=0.5)
+
+    plt.tight_layout()
+    return ax
+
+
+# ================================================================= #
+# 7. BASELINE NAÏF (inchangé)                                       #
+# ================================================================= #
+
+def init_baseline() -> tf.keras.Model:
+    """
+    Construit le modèle baseline naïf "dernière valeur observée".
+
+    Prédit la valeur TARGET en renvoyant la dernière valeur observée dans X.
+    Sert de borne inférieure : le LSTM doit impérativement faire mieux.
+
+    Returns:
+        tf.keras.Model: Modèle Keras compilé retournant x[:, -1, 1].
+    """
+    model = models.Sequential([
+        layers.Lambda(lambda x: x[:, -1, 1, None])
+    ])
+    model.compile(loss='mse', optimizer=optimizers.Adam(learning_rate=0.02), metrics=["mae"])
+    return model
+
+
+# ================================================================= #
+# 8. PIPELINE PRINCIPAL : UN SEUL FOLD                              #
+# ================================================================= #
+
+folds = get_folds(df, FOLD_LENGTH, FOLD_STRIDE)
+print(f'\n{len(folds)} folds générés, chacun de forme {folds[0].shape}.')
+
+fold = folds[0]
+(fold_train, fold_test) = train_test_split(fold, TRAIN_TEST_RATIO, INPUT_LENGTH)
+
+X_train, y_train = get_X_y_strides(fold_train, INPUT_LENGTH, OUTPUT_LENGTH, SEQUENCE_STRIDE)
+X_test,  y_test  = get_X_y_strides(fold_test,  INPUT_LENGTH, OUTPUT_LENGTH, SEQUENCE_STRIDE)
+
+print(f"X_train : {X_train.shape} | y_train : {y_train.shape}")
+print(f"X_test  : {X_test.shape}  | y_test  : {y_test.shape}")
+
+# 1 - Initialisation
+model = init_model(X_train, y_train)
+model.summary()
+
+# 2 - Entraînement
+model, history = fit_model(model, X_train, y_train)
+plot_history(history)
+
+# 3 - Évaluation
+res = model.evaluate(X_test, y_test, verbose=0)
+baseline_model = init_baseline()
+baseline_score = baseline_model.evaluate(X_test, y_test, verbose=0)
+
+print(f"\n{'='*50}")
+print(f"MAE Baseline : {round(baseline_score[1], 2)}")
+print(f"MAE LSTM     : {round(res[1], 2)}")
+print(f"🔥 Amélioration : {round((1 - res[1] / baseline_score[1]) * 100, 2)} %")
+print(f"{'='*50}")
+
+
+# ================================================================= #
+# 9. VALIDATION CROISÉE                                            #
+# ================================================================= #
+
+def cross_validate_baseline_and_lstm() -> Tuple[List[float], List[float]]:
+    """
+    Effectue une validation croisée temporelle comparant baseline et LSTM optimisé.
+
+    Pour chaque fold :
+        1. Séparation train/test.
+        2. Évaluation du baseline naïf.
+        3. Entraînement du LSTM optimisé avec early stopping + ReduceLROnPlateau.
+        4. Affichage des MAE et du gain relatif.
+
+    Returns:
+        Tuple[List[float], List[float]]:
+            - list_of_mae_baseline_model  : MAE du baseline pour chaque fold.
+            - list_of_mae_recurrent_model : MAE du LSTM pour chaque fold.
+    """
+    list_of_mae_baseline_model  = []
+    list_of_mae_recurrent_model = []
+
+    folds = get_folds(df, FOLD_LENGTH, FOLD_STRIDE)
+
+    for fold_id, fold in enumerate(folds):
+
+        (fold_train, fold_test) = train_test_split(fold, TRAIN_TEST_RATIO, INPUT_LENGTH)
+        X_train, y_train = get_X_y_strides(fold_train, INPUT_LENGTH, OUTPUT_LENGTH, SEQUENCE_STRIDE)
+        X_test,  y_test  = get_X_y_strides(fold_test,  INPUT_LENGTH, OUTPUT_LENGTH, SEQUENCE_STRIDE)
+
+        # Baseline
+        baseline_model = init_baseline()
+        mae_baseline   = baseline_model.evaluate(X_test, y_test, verbose=0)[1]
+        list_of_mae_baseline_model.append(mae_baseline)
+
+        # LSTM optimisé
+        model = init_model(X_train, y_train)
+        model, _ = fit_model(model, X_train, y_train, verbose=0)
+        mae_lstm = model.evaluate(X_test, y_test, verbose=0)[1]
+        list_of_mae_recurrent_model.append(mae_lstm)
+
+        print(f"{'─'*50}")
+        print(f"Fold n°{fold_id} | Baseline MAE : {round(mae_baseline, 2)} | LSTM MAE : {round(mae_lstm, 2)}")
+        print(f"           🏋🏽 Amélioration : {round((1 - mae_lstm / mae_baseline) * 100, 2)} %")
+
+    print(f"\n{'='*50}")
+    print(f"Moyenne Baseline : {round(np.mean(list_of_mae_baseline_model), 2)}")
+    print(f"Moyenne LSTM     : {round(np.mean(list_of_mae_recurrent_model), 2)}")
+    print(f"🔥 Amélioration moyenne : {round((1 - np.mean(list_of_mae_recurrent_model) / np.mean(list_of_mae_baseline_model)) * 100, 2)} %")
+
+    return list_of_mae_baseline_model, list_of_mae_recurrent_model
+
+
+mae_baselines, mae_lstms = cross_validate_baseline_and_lstm()
