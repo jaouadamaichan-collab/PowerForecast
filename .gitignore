@@ -13,4 +13,5 @@ EOF
 
 notebooks/
 agents/
-.ipynb
+*.ipynb
+*.egg-info/
