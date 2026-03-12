@@ -7,10 +7,14 @@ from power_forecast.logic.get_data.time_features import (
     add_public_holidays,
     add_target_horizon_features,
     add_catch24_features,
-    add_lag_and_contexte_features)
+    add_lag_and_contexte_features_target,
+    add_lag_and_contexte_features_frontiere,
+    filter_neighbor_columns,
+    add_crisis_column)
 from power_forecast.logic.utils.others import load_df, save_df
 from power_forecast.logic.get_data.meteo import get_meteo
 from power_forecast.params import *
+
 
 
 # A utiliser avec le raw_data all_countries.csv
@@ -61,6 +65,8 @@ def build_feature_dataframe(
     time_interval: str  = 'hourly',
     save_name:     str  = 'df_catch24_timeseries',
     drop_nan: bool = True,
+    keep_only_neighbors: bool = True,
+    add_lag_frontiere: bool = True,
     load_from_pickle: bool = False,
 ) -> pd.DataFrame:
     """
@@ -100,16 +106,25 @@ def build_feature_dataframe(
         return load_df(save_name)
 
     iso_objective = VILLE_TO_ISO.get(country_objective, None)
+    print(f"Building feature dataframe for {country_objective} ({iso_objective}) with target distance {target_day_distance} days.")
     if iso_objective is None:
         raise ValueError(f"Country '{country_objective}' not found in VILLE_TO_ISO mapping. Please check the country name or update the mapping.")
 
-    # ── Step 1: Load ──────────────────────────────────────────────────────────
     print("\n── Step 1: Load raw data ────────────────────────────────────────")
     df = create_dataframe_base(filepath)
+    #print(df.columns.to_list())
 
-    # ── Step 2: Align start date ──────────────────────────────────────────────
-    print("\n── Step 2: Align start date ─────────────────────────────────────")
-    df = align_start_to_column(df, column=align_column, apply=True)
+
+    if keep_only_neighbors:
+        print("\n── Step 2: Keeping only neighboring countries ─────────────────────────────")
+        df = filter_neighbor_columns(df, iso=iso_objective)
+
+    
+    country_list = df.columns.tolist()
+    # If croatia considered i cut df
+    if align_column in df.columns:
+        df = align_start_to_column(df, column=align_column, apply=True)
+        
 
     # ── Step 3: Remove outliers ───────────────────────────────────────────────
     print("\n── Step 3: Replace outliers ─────────────────────────────────────")
@@ -120,6 +135,7 @@ def build_feature_dataframe(
     print("\n── Step 4: Temporal features ────────────────────────────────────")
     df = add_temporal_features(df)
     df = add_public_holidays(df, country=iso_objective)
+    df = add_crisis_column(df, tz='UTC')
 
     # ── Step 5: Meteo features ─────────────────────────────────────────────
     print("\n── Step 5: Meteo features ───────────────────────────────────────")
@@ -133,7 +149,12 @@ def build_feature_dataframe(
 
     # ── Step 7: Add lag and context features ───────────────────────────────────────
     print("\n── Step 7: Add lag and context feature ────────────────")
-    df = add_lag_and_contexte_features(df, iso_objective=iso_objective)
+    df = add_lag_and_contexte_features_target(df, iso_objective=iso_objective)
+    
+    if add_lag_frontiere:
+        print(f"\n── Adding lag and context features for neighbor {FRONTIERE.get(iso_objective, [])} ────────────────")
+        for neighbor in FRONTIERE.get(iso_objective, []):
+            df = add_lag_and_contexte_features_frontiere(df, iso_objective=neighbor)
 
     # ── Step 8: catch24 features ──────────────────────────────────────────────
     print(f"\n── Step 7: catch24 features for {country_objective} ──────────────────")

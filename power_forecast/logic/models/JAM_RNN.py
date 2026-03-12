@@ -16,8 +16,8 @@ Le pipeline comprend :
 
 import pandas as pd
 from power_forecast.logic.get_data.download_api import build_feature_dataframe
-%load_ext autoreload
-%autoreload 2
+# %load_ext autoreload
+# %autoreload 2
 pd.set_option('display.max_columns', None)
 
 # Chargement du DataFrame de features à partir d'un CSV multi-pays.

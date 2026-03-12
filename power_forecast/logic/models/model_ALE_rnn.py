@@ -333,6 +333,3 @@ loss, mae, mse = model_lstm.evaluate(X_test, y_test, verbose=1)
 print("Test Loss:", loss)
 print("Test MAE:", mae)
 print("Test MSE:", mse)
-
-
-
