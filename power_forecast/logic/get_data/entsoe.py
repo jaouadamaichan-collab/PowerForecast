@@ -220,53 +220,6 @@ def compute_stats(df: pd.DataFrame) -> pd.DataFrame:
     return stats.round(2)
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# Visualisation
-# ══════════════════════════════════════════════════════════════════════════════
-
-
-
-
-def plot_prices(df: pd.DataFrame, step: str, output_dir: Path | None = None) -> None:
-    """Génère le graphique des prix (multi-pays si nécessaire)."""
-    n_countries = len(df.columns)
-    fig, ax = plt.subplots(figsize=(14, 6))
-
-    for i, country in enumerate(df.columns):
-        color = PALETTE[i % len(PALETTE)]
-        label = COUNTRY_LABELS.get(country, country)
-        ax.plot(df.index, df[country], linewidth=1.5, label=label, color=color, alpha=0.85)
-
-    # Mise en forme
-    ax.set_title(
-        f"Prix day-ahead — {', '.join(COUNTRY_LABELS.get(c, c) for c in df.columns)}\n"
-        f"({df.index[0].strftime('%d/%m/%Y')} → {df.index[-1].strftime('%d/%m/%Y')}"
-        f" | pas : {step_label(step)})",
-        fontsize=13,
-        pad=12,
-    )
-    ax.set_ylabel("€/MWh", fontsize=11)
-    ax.set_xlabel("")
-    ax.xaxis.set_major_formatter(mdates.DateFormatter("%b %Y"))
-    ax.xaxis.set_major_locator(mdates.MonthLocator())
-    ax.yaxis.set_major_locator(MaxNLocator(integer=False, nbins=8))
-    ax.grid(axis="y", linestyle="--", alpha=0.4)
-    ax.legend(loc="upper right", framealpha=0.85)
-
-    if n_countries == 1:
-        # Zone colorée sous la courbe pour un pays unique
-        country = df.columns[0]
-        ax.fill_between(df.index, df[country], alpha=0.08, color=PALETTE[0])
-
-    plt.tight_layout()
-
-    if output_dir:
-        path = output_dir / "prix_day_ahead.png"
-        fig.savefig(path, dpi=150)
-        log.info("📊 Graphique sauvegardé : %s", path)
-
-    plt.show()
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Export
