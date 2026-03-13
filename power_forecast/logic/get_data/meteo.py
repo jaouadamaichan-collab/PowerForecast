@@ -222,9 +222,11 @@ def get_meteo(
     df_pivot = df_pivot.set_index("timestamp")
 
     df_all = df.join(df_pivot, how="left")
-    
+
     return df_all
 
 
 # # ── Paramètres à renseigner ───────────────────────────────────────────────────
 # df = get_meteo("Berlin", "2024-01-01", "2024-12-31")
+
+
