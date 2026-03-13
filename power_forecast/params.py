@@ -109,11 +109,11 @@ WMO_LABELS = {
 }
 
 COLONNES_METEO = [
-    "Température (°C)",
-    "Précipitations (mm)",
-    "Vent (km/h)",
-    "Rafales (km/h)",
-    "Ensoleillement (MJ/m²)",
+    "temperature_c",
+    "precipitation_mm",
+    "vent_km_h",
+    "rafales_km_h",
+    "irradiation_MJ_m2",
 ]
 
 VILLE_TO_ISO = {

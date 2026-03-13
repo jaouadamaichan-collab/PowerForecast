@@ -50,18 +50,18 @@ def fetch_historical(city: dict, date_start: str, date_end: str) -> pd.DataFrame
     hourly_data = data["hourly"]
 
     df = pd.DataFrame({
-        "Date":                   pd.to_datetime(hourly_data["time"]),
-        "Ville":                  city["name"],
-        "Pays":                   city["country"],
-        "Température (°C)":       hourly_data["temperature_2m"],
-        "Précipitations (mm)":    hourly_data["precipitation"],
-        "Vent (km/h)":            hourly_data["windspeed_10m"],
-        "Rafales (km/h)":         hourly_data["windgusts_10m"],
-        "Ensoleillement (MJ/m²)": hourly_data["shortwave_radiation"],
-        "Code météo (WMO)":       hourly_data["weathercode"],
+        "date":                   pd.to_datetime(hourly_data["time"]),
+        "ville":                  city["name"],
+        "pays":                   city["country"],
+        "temperature_c":       hourly_data["temperature_2m"],
+        "precipitation_mm":    hourly_data["precipitation"],
+        "vent_km_h":            hourly_data["windspeed_10m"],
+        "rafales_km_h":         hourly_data["windgusts_10m"],
+        "irradiation_MJ_m2": hourly_data["shortwave_radiation"],
+        "code_meteo":       hourly_data["weathercode"],
     })
 
-    df["Conditions"] = df["Code météo (WMO)"].map(WMO_LABELS).fillna("Inconnu")
+    df["Conditions"] = df["code_meteo"].map(WMO_LABELS).fillna("Inconnu")
 
     return df
 
@@ -83,8 +83,8 @@ def build_dataframe(city_names: list, date_debut: str, date_fin: str) -> pd.Data
         raise RuntimeError("Aucune donnée récupérée.")
 
     df_all = pd.concat(frames, ignore_index=True)
-    df_all["Code météo (WMO)"] = df_all["Code météo (WMO)"].astype("Int64")
-    df_all = df_all.sort_values(["Date", "Ville"]).reset_index(drop=True)
+    df_all["code_meteo"] = df_all["code_meteo"].astype("Int64")
+    df_all = df_all.sort_values(["date", "ville"]).reset_index(drop=True)
 
     return df_all
 
@@ -98,12 +98,12 @@ def apercu(df: pd.DataFrame) -> None:
     print(df.dtypes.to_string())
 
     print("\n── Statistiques descriptives ────────────────────────────────────────")
-    num_cols = ["Température (°C)", "Précipitations (mm)", "Vent (km/h)", "Ensoleillement (MJ/m²)"]
+    num_cols = ["temperature_c", "precipitation_mm", "vent_km_h", "irradiation_MJ_m2"]
     print(df[num_cols].describe().round(2).to_string())
 
     print("\n── Températures moyennes par pays (ISO) ─────────────────────────────")
     print(
-        df.groupby("Pays")["Température (°C)"]
+        df.groupby("pays")["temperature_c"]
         .mean().round(2)
         .sort_values(ascending=False)
         .to_string()
@@ -131,7 +131,7 @@ def preproc_meteo(
     city       : Ville(s) parmi VILLES_DISPONIBLES, ou "all".
     """
     df = df.copy()
-    df["Date"] = pd.to_datetime(df["Date"])
+    df["date"] = pd.to_datetime(df["date"])
 
     if isinstance(city, str):
         cities = VILLES_DISPONIBLES if city.lower() == "all" else [city]
@@ -146,11 +146,11 @@ def preproc_meteo(
         )
 
     mask = (
-        (df["Date"] >= pd.to_datetime(date_start))
-        & (df["Date"] <= pd.to_datetime(date_end))
-        & (df["Ville"].isin(cities))
+        (df["date"] >= pd.to_datetime(date_start))
+        & (df["date"] <= pd.to_datetime(date_end))
+        & (df["ville"].isin(cities))
     )
-    df_filtered = df.loc[mask, ["Date", "Ville"] + COLONNES_METEO].copy()
+    df_filtered = df.loc[mask, ["date", "ville"] + COLONNES_METEO].copy()
 
     if df_filtered.empty:
         raise ValueError(
@@ -158,12 +158,12 @@ def preproc_meteo(
             f"et les villes {cities}."
         )
 
-    df_filtered["Ville"] = df_filtered["Ville"].map(VILLE_TO_ISO)
+    df_filtered["ville"] = df_filtered["ville"].map(VILLE_TO_ISO)
     cities_iso = [VILLE_TO_ISO[c] for c in cities]
 
     df_pivot = df_filtered.pivot(
-        index="Date",
-        columns="Ville",
+        index="date",
+        columns="ville",
         values=COLONNES_METEO,
     )
     df_pivot.columns = [f"{iso}_{indicateur}" for indicateur, iso in df_pivot.columns]
@@ -175,7 +175,7 @@ def preproc_meteo(
     ]
     df_pivot = df_pivot[cols_ordonnes]
     df_pivot.reset_index(inplace=True)
-    df_pivot.rename(columns={"Date": "timestamp"}, inplace=True)
+    df_pivot.rename(columns={"date": "timestamp"}, inplace=True)
     df_pivot.sort_values("timestamp", inplace=True)
     df_pivot.reset_index(drop=True, inplace=True)
     df_pivot["timestamp"] = pd.to_datetime(df_pivot["timestamp"], utc=True)

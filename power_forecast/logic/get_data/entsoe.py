@@ -27,6 +27,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from matplotlib.ticker import MaxNLocator
+from power_forecast.logic.utils.graphs import step_label, plot_prices
 
 try:
     from entsoe import EntsoePandasClient

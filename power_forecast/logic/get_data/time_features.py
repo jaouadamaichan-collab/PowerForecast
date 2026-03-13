@@ -209,11 +209,11 @@ def add_target_horizon_features(df: pd.DataFrame, iso_objective: str, target_day
 
     # --- Meteo forecast (proxy: actual meteo at target time) ---
     meteo_cols = [
-        f"{iso_objective}_Température (°C)",
-        f"{iso_objective}_Précipitations (mm)",
-        f"{iso_objective}_Vent (km/h)",
-        f"{iso_objective}_Rafales (km/h)",
-        f"{iso_objective}_Ensoleillement (MJ/m²)",
+        f"{iso_objective}_temperature_c",
+        f"{iso_objective}_precipitation_mm",
+        f"{iso_objective}_vent_km_h",
+        f"{iso_objective}_rafales_km_h",
+        f"{iso_objective}_irradiation_MJ_m2",
     ]
     for col in meteo_cols:
         df[f"target_{col}"] = df[col].shift(-H)
