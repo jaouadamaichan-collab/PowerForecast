@@ -18,7 +18,7 @@ import random
 
 pd.set_option('display.max_columns', None)
 
-df = build_feature_dataframe('raw_data/all_countries.csv', load_from_pickle=True)
+df = build_feature_dataframe('raw_data/all_countries.csv', load_from_pickle=False)
 
 
 # ── DEFINE INPUT/OUTPUT PARAMETERS ──────────────────────────
