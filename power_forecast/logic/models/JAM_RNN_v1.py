@@ -33,10 +33,10 @@ import matplotlib.pyplot as plt
 from typing import List, Tuple
 
 from power_forecast.logic.get_data.download_api import build_feature_dataframe
-from tensorflow.keras import models, layers, Input, optimizers
-from tensorflow.keras.regularizers import L1L2
-from tensorflow.keras.layers import Normalization
-from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
+from keras import models, layers, Input, optimizers
+from keras.regularizers import L1L2
+from keras.layers import Normalization
+from keras.callbacks import EarlyStopping, ReduceLROnPlateau
 
 pd.set_option('display.max_columns', None)
 
