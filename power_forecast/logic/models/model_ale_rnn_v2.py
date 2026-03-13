@@ -106,11 +106,6 @@ if resample_sequences:
     print(f"Sampled and saved — X_train: {X_train.shape}")
     print(f"Sampled and saved — y_train: {y_train.shape}")
 
-if resample_sequences == False:
-    X_test = np.load(SAVE_SEQUENCES / "X_test.npy")
-    y_test = np.load(SAVE_SEQUENCES / "y_test.npy")
-    print(f"Loaded — X_test: {X_test.shape}")
-    print(f"Loaded — y_test: {y_test.shape}")
 
 
 val_split = int(len(X_train) * (1 - VAL_RATIO))
