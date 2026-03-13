@@ -1,9 +1,9 @@
 import numpy as np
 import pandas as pd
 from power_forecast.params import *
-
 import pycatch22
 import holidays
+
 
 
 
@@ -17,6 +17,15 @@ def align_start_to_column(df, column, apply=True):
         df_aligned = df[df.index >= first_valid]
         return df_aligned
     return df
+
+def filter_neighbor_columns(df: pd.DataFrame, iso: str) -> pd.DataFrame:
+    """Keep only columns corresponding to neighboring countries of the given ISO."""
+    neighbors = FRONTIERE.get(iso, [])
+    cols_to_keep = [col for col in neighbors if col in df.columns]
+    if iso in df.columns and iso not in cols_to_keep:
+        cols_to_keep.append(iso)
+    print(f"Keeping target and its neighbors: {cols_to_keep}")
+    return df[cols_to_keep]
 
 
 def replace_outliers_with_interpolation(df, limit_low=LIMIT_LOW, limit_high=LIMIT_HIGH):
@@ -187,7 +196,6 @@ def add_target_horizon_features(df: pd.DataFrame, iso_objective: str, target_day
 
     # --- Target temporal features (from existing columns) ---
     temporal_cols = [
-        "hour", "day_of_week", "month", "quarter",
         "is_weekend", "is_monday", "is_holiday_FRA",
         "hour_sin", "hour_cos",
         "day_of_week_sin", "day_of_week_cos",
@@ -210,38 +218,62 @@ def add_target_horizon_features(df: pd.DataFrame, iso_objective: str, target_day
     for col in meteo_cols:
         df[f"target_{col}"] = df[col].shift(-H)
 
-    # --- Price lag anchors (safe: looking into the past) ---
-    # These are NOT shifted forward — they look backwards from current t
-    # df[f"{iso_objective}_price_lag_1day"]   = df[iso_objective].shift(24)
-    # df[f"{iso_objective}_price_lag_2day"]   = df[iso_objective].shift(48)
-    # df[f"{iso_objective}_price_lag_3day"]   = df[iso_objective].shift(72)
-    # df[f"{iso_objective}_price_lag_4day"]   = df[iso_objective].shift(96)
-    # df[f"{iso_objective}_price_lag_1week"]  = df[iso_objective].shift(7*24)
 
     return df
 
-def add_lag_and_contexte_features(df: pd.DataFrame, iso_objective: str):
+def add_lag_and_contexte_features_target(df: pd.DataFrame, iso_objective: str) -> pd.DataFrame:
+    new_cols = {}
 
-    lags = [
-        1, 2, 3,        # court terme
-        6, 12, 24,      # intra-journalier
-        48, 72,         # 2-3 jours
-        168, 336        # 1, 2 semaines (même heure)
-        ]
-    for lag in lags:
-        df[f'lag_{lag}h'] = df[iso_objective].shift(lag)
+    for lag in LAGS_TARGET:
+        new_cols[f'{iso_objective}lag_{lag}h'] = df[iso_objective].shift(lag)
 
-    for w in [6, 12, 24, 48]:
+    for w in ROLLING_WINDOWS_TARGET:
         base = df[iso_objective].shift(1)  # shift(1) anti-leakage
-        df[f'roll_mean_{w}h'] = base.rolling(w).mean()
-        df[f'roll_std_{w}h']  = base.rolling(w).std()
-        df[f'roll_min_{w}h']  = base.rolling(w).min()
-        df[f'roll_max_{w}h']  = base.rolling(w).max()
-        df[f'roll_range_{w}h']= df[f'roll_max_{w}h'] - df[f'roll_min_{w}h']
+        roll_min = base.rolling(w).min()
+        roll_max = base.rolling(w).max()
+
+        new_cols[f'{iso_objective}_roll_mean_{w}h']  = base.rolling(w).mean()
+        new_cols[f'{iso_objective}_roll_std_{w}h']   = base.rolling(w).std()
+        new_cols[f'{iso_objective}_roll_min_{w}h']   = roll_min
+        new_cols[f'{iso_objective}_roll_max_{w}h']   = roll_max
+        new_cols[f'{iso_objective}_roll_range_{w}h'] = roll_max - roll_min
+
+    return pd.concat([df, pd.DataFrame(new_cols, index=df.index)], axis=1)
+
+
+def add_lag_and_contexte_features_frontiere(df: pd.DataFrame, iso_objective: str) -> pd.DataFrame:
+    new_cols = {}
+
+    for lag in LAGS_FRONTIERE:
+        new_cols[f'{iso_objective}_lag_{lag}h'] = df[iso_objective].shift(lag)
+
+    for w in ROLLING_WINDOWS_FRONTIERE:
+        base = df[iso_objective].shift(1)  # shift(1) anti-leakage
+        roll_min = base.rolling(w).min()
+        roll_max = base.rolling(w).max()
+
+        new_cols[f'{iso_objective}_roll_mean_{w}h']  = base.rolling(w).mean()
+        new_cols[f'{iso_objective}_roll_std_{w}h']   = base.rolling(w).std()
+        new_cols[f'{iso_objective}_roll_min_{w}h']   = roll_min
+        new_cols[f'{iso_objective}_roll_max_{w}h']   = roll_max
+        new_cols[f'{iso_objective}_roll_range_{w}h'] = roll_max - roll_min
+
+    return pd.concat([df, pd.DataFrame(new_cols, index=df.index)], axis=1)
+
+
+
+def add_crisis_column(df: pd.DataFrame, tz: str = 'UTC') -> pd.DataFrame:
+    """Add binary crisis column based on known European energy crisis periods."""
+    df = df.copy()
+    df['crisis'] = 0
+
+    for start, end in CRISIS_PERIODS:
+        start_ts = pd.Timestamp(start, tz=tz)
+        end_ts = pd.Timestamp(end, tz=tz)
+        mask = (df.index >= start_ts) & (df.index <= end_ts)
+        df.loc[mask, 'crisis'] = 1
 
     return df
-
-
 
 
 

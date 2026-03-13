@@ -52,8 +52,6 @@ from tensorflow.keras import models, layers, Input, optimizers
 from tensorflow.keras.layers import Normalization
 from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
 
-%load_ext autoreload
-%autoreload 2
 pd.set_option('display.max_columns', None)
 
 # ================================================================= #
@@ -391,7 +389,7 @@ def init_baseline() -> tf.keras.Model:
     model = models.Sequential([
         layers.Lambda(lambda x: x[:, -1, target_idx, None])
     ])
-    model.compile(loss='mse', optimizer=optimizers.Adam(lr=0.02), metrics=['mae'])
+    model.compile(loss='mse', optimizer=optimizers.Adam(learning_rate=0.02), metrics=['mae'])
     return model
 
 
