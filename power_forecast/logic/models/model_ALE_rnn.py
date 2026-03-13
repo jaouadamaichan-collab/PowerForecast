@@ -31,10 +31,12 @@ OUTPUT_LENGTH    = 48          # predict 24h of target day
 HORIZON          = 0          # skip 24h between input end and output
 TRAIN_TEST_RATIO = 0.98       # 98% of sequences → train, 2% → test
 VAL_RATIO        = 0.1         # 10% of train sequences → validation
-SAMPLING_RATIO = 0.8  
+SAMPLING_RATIO = 0.7  
+STRIDE_TRAIN  = 48        # advance 1 day between train sequences
+STRIDE_TEST   = 48        # advance 1 day between test sequences (deterministic)
 # sample 70% of possible sequences (for faster training; set to 1.0 to use all)
 BATCH_SIZE = 64
-EPOCHS = 50
+EPOCHS = 100
 MODEL_NAME    = "lstm" 
 
 fit_scaler = True  # set to False to skip scaling (useful for debugging)
@@ -92,121 +94,78 @@ if resample_sequences == False:
     print(f"Loaded — y_train: {y_train.shape}")
 
 
-# Methods to estimate how many sequences can be extracted from a fold,
-# and recommend n_sequences based on fold length and sequence span.
-# Useful for setting n_sequences_train and n_sequences_test in get_X_y.
-
-def max_sequences(fold: pd.DataFrame) -> int:
-    """
-    Max number of NON-OVERLAPPING sequences in a fold.
-    This is the theoretical ceiling for n_sequences.
-    In practice use 50-80% of this to avoid redundancy.
-    """
-    total_span = INPUT_LENGTH + HORIZON + OUTPUT_LENGTH  
-    return max(0, len(fold) - total_span)
-
-def recommend_n_sequences(fold_train, fold_test):
-    max_train = max_sequences(fold_train)
-    max_test  = max_sequences(fold_test)
-    
-    print(f"fold_train length : {len(fold_train)} rows")
-    print(f"fold_test  length : {len(fold_test)} rows")
-    print(f"One sequence span : {INPUT_LENGTH + HORIZON + OUTPUT_LENGTH} rows")
-    print(f"Max train sequences (non-overlapping): {max_train}")
-    print(f"Max test  sequences (non-overlapping): {max_test}")
-    print(f"→ Recommended n_sequences_train: {int(max_train * 0.7)}")
-    print(f"→ Recommended n_sequences_test:  {int(max_test  * 0.7)}")
-
-
-n_sequences_train = int(max_sequences(fold_train) * SAMPLING_RATIO)
-
-# If sequenced X_train and y_train do not exist, create them and save for future use.
-resample_sequences = True  # set to True to re-sample sequences from fold_train
-print(f"If you want to re-sample, it will create {n_sequences_train} train sequences.")
 
 # Method to transform our X_train in 3-dimensional array of sequences, and y_train in 2D array of corresponding labels.
 
 
-def get_Xi_yi(fold: pd.DataFrame, feature_cols: list, target_col: str,
-              input_length: int, horizon: int, output_length: int,
-              start_idx: int = None):
+# ── Core: single sequence ──────────────────────────────────────────────────
+def get_Xi_yi(fold: pd.DataFrame,
+              feature_cols: list,
+              target_col: str,
+              start_idx: int,
+              input_length: int  = INPUT_LENGTH,
+              horizon: int       = HORIZON,
+              output_length: int = OUTPUT_LENGTH) -> tuple:
     """
-    Extract one (X_i, y_i) sequence pair from a fold.
+    Extract one (X_i, y_i) pair from fold starting at start_idx.
 
-    Sequence layout:
-        [start_idx ──── start+input_length)     → X_i (features fed to RNN)
-        [start+input_length ── +horizon)         → skipped (unknown future)
-        [start+input_length+horizon ── +output)  → y_i (prices to predict)
-
-    start_idx=None → random sampling
-    start_idx=int  → deterministic (used for chronological scan)
+        [start_idx → +input_length)           → X_i  (input_length, n_features)
+        [+input_length → +horizon)             → skipped
+        [+input_length+horizon → +output_length) → y_i  (output_length,)
     """
-    total_span = input_length + horizon + output_length
-    max_start  = len(fold) - total_span
-
-    if max_start <= 0:
-        raise ValueError(
-            f"Fold too short ({len(fold)} rows) for one sequence ({total_span} rows). "
-            f"Reduce INPUT_LENGTH or use a longer fold."
-        )
-
-    if start_idx is None:
-        start_idx = np.random.randint(0, max_start + 1)
-
     X_i = fold[feature_cols].iloc[start_idx : start_idx + input_length].values
-    # shape → (input_length, n_features)
-
     y_start = start_idx + input_length + horizon
     y_i = fold[target_col].iloc[y_start : y_start + output_length].values
-    # shape → (output_length,)
-
     return X_i, y_i
 
-
-def get_X_y(fold: pd.DataFrame, feature_cols: list, target_col: str,
-            input_length: int, horizon: int, output_length: int,
-            n_sequences: int = None, mode: str = 'random'):
+# parallelized version to extract all sequences at once using numpy's sliding_window_view.
+def get_X_y(fold: pd.DataFrame,
+            feature_cols: list,
+            target_col: str,
+            stride: int,
+            input_length: int  = INPUT_LENGTH,
+            horizon: int       = HORIZON,
+            output_length: int = OUTPUT_LENGTH) -> tuple:
     """
-    Build (X, y) 3D arrays from a fold.
-
-    mode='random':        randomly sample n_sequences pairs (with possible overlap)
-                          → good for TRAIN (model sees diverse starting points)
-    mode='chronological': scan the fold step by step, all possible pairs
-                          → good for TEST (no randomness, deterministic evaluation)
-
-    Returns:
-        X: (n_sequences, input_length, n_features)
-        y: (n_sequences, output_length)
+    Fully vectorized sequence builder using sliding_window_view.
+    No Python for loop — all windows created at once.
     """
     total_span = input_length + horizon + output_length
-    max_start  = len(fold) - total_span
+    if len(fold) < total_span:
+        raise ValueError(
+            f"Fold too short: {len(fold)} rows, need at least {total_span}."
+        )
 
-    if max_start <= 0:
-        raise ValueError(f"Fold too short: {len(fold)} rows, need {total_span}")
+    X_all = fold[feature_cols].values   # (n_rows, n_features)
+    y_all = fold[target_col].values     # (n_rows,)
 
-    if mode == 'chronological':
-        indices = range(0, max_start + 1)  # every possible start
-    else:
-        if n_sequences is None:
-            raise ValueError("n_sequences required for random mode")
-        indices = [None] * n_sequences     # None → random in get_Xi_yi
+    # all possible windows of size total_span, then subsample by stride
+    # shape → (n_windows, total_span, n_features)
+    X_wins = np.lib.stride_tricks.sliding_window_view(
+        X_all, window_shape=(total_span, X_all.shape[1])
+    )[:, 0, :, :]  # squeeze extra dim → (n_windows, total_span, n_features)
 
-    X_list, y_list = [], []
-    for idx in indices:
-        X_i, y_i = get_Xi_yi(fold, feature_cols, target_col,
-                              input_length, horizon, output_length,
-                              start_idx=idx)
-        X_list.append(X_i)
-        y_list.append(y_i)
+    # subsample by stride
+    X_wins = X_wins[::stride]           # (n_sequences, total_span, n_features)
 
-    return np.array(X_list), np.array(y_list)
+    # slice X and y out of each window
+    X = X_wins[:, :input_length, :]                              # (n_seq, input_length, n_features)
+    y = X_wins[:, input_length + horizon:, :]                    # temp, need target only
+
+    # y from target column directly
+    y_wins = np.lib.stride_tricks.sliding_window_view(y_all, total_span)[::stride]
+    y = y_wins[:, input_length + horizon:]                       # (n_seq, output_length)
+
+    print(f"  → {len(X)} sequences  "
+          f"(fold={len(fold)}h, stride={stride}h, span={total_span}h)")
+
+    return X, y
 
 
 
 if resample_sequences:
-    X_train, y_train = get_X_y(fold_train, feature_cols, TARGET_COL,
-                              INPUT_LENGTH, HORIZON, OUTPUT_LENGTH,
-                              n_sequences=n_sequences_train, mode='random')
+    X_train, y_train = get_X_y(fold_train, feature_cols, TARGET_COL, STRIDE_TRAIN,
+                              INPUT_LENGTH, HORIZON, OUTPUT_LENGTH)
     np.save(SAVE_SEQUENCES / "X_train.npy", X_train)
     np.save(SAVE_SEQUENCES / "y_train.npy", y_train)
     print(f"Sampled and saved — X_train: {X_train.shape}")
@@ -319,15 +278,8 @@ model_lstm, history_lstm = train_or_load_model_lstm(
 
 
 # ---- Create X_test and y_test from fold_test (chronological scan) ----
-X_test, y_test = get_X_y(
-    fold=fold_test,
-    feature_cols=feature_cols,
-    target_col=TARGET_COL,
-    input_length=INPUT_LENGTH,
-    horizon=HORIZON,
-    output_length=OUTPUT_LENGTH,
-    mode="chronological"
-)
+X_test, y_test = get_X_y(fold_test, feature_cols, TARGET_COL, STRIDE_TEST,
+                        INPUT_LENGTH, HORIZON, OUTPUT_LENGTH)
 
 # Evaluate model on test set
 X_test_scaled = scaler.transform(X_test)
