@@ -77,8 +77,6 @@ from sklearn.preprocessing import StandardScaler
 from tensorflow.keras import models, layers, Input, optimizers, backend as K
 from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
 
-%load_ext autoreload
-%autoreload 2
 pd.set_option('display.max_columns', None)
 
 # ================================================================= #
