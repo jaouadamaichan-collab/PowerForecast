@@ -24,7 +24,7 @@ df = build_feature_dataframe('raw_data/all_countries.csv', load_from_pickle=Fals
 # ── DEFINE INPUT/OUTPUT PARAMETERS ──────────────────────────
  
 TARGET_COL       = "FRA"
-feature_cols = [c for c in df.columns if c != TARGET_COL]
+feature_cols = [c for c in df.columns ]
 
 INPUT_LENGTH     = 14 * 24      # 168h context fed to RNN
 OUTPUT_LENGTH    = 48          # predict 24h of target day
@@ -72,25 +72,6 @@ print(f"fold_test:  {len(fold_test)} rows   {fold_test.index[0]} → {fold_test.
 print(f"First y_test label: {fold_test.index[INPUT_LENGTH + HORIZON]}")
 
 
-## ------------------- Standardize features -------------------
-
-# ## STEP 2 — SCALE FEATURES (fit on train only)
-# ## ✅ Scaler sees only fold_train → no future information leaks in.
-# ## ✅ We scale features only, NOT the target (y).
-# ##    Keeping y unscaled makes predictions directly interpretable
-# ##    as real electricity prices (€/MWh).
-
-
-if fit_scaler:
-    scaler = StandardScaler()
-    fold_train[feature_cols] = scaler.fit_transform(fold_train[feature_cols])
-    joblib.dump(scaler, SCALER_PATH)
-else: 
-    scaler = joblib.load(SCALER_PATH)
-
-
-fold_test[feature_cols]  = scaler.transform(fold_test[feature_cols])
-## transform only on test — same scaler, no re-fitting
 
 
 
@@ -104,10 +85,11 @@ fold_test[feature_cols]  = scaler.transform(fold_test[feature_cols])
 ## Output: X_train (n, 2 weeks data, n_features) | y_train (n, 24)
 
 #Load if they exisits alreaday, otherwise create them and save for future use.
-X_train = np.load(SAVE_SEQUENCES / "X_train.npy")
-y_train = np.load(SAVE_SEQUENCES / "y_train.npy")
-print(f"Loaded — X_train: {X_train.shape}")
-print(f"Loaded — y_train: {y_train.shape}")
+if resample_sequences == False:
+    X_train = np.load(SAVE_SEQUENCES / "X_train.npy")
+    y_train = np.load(SAVE_SEQUENCES / "y_train.npy")
+    print(f"Loaded — X_train: {X_train.shape}")
+    print(f"Loaded — y_train: {y_train.shape}")
 
 
 # Methods to estimate how many sequences can be extracted from a fold,
@@ -232,17 +214,23 @@ if resample_sequences:
 
 
 
+## ------------------- Standardize features -------------------
+
+
+scaler = StandardScaler()
+X_train_scaled = scaler.fit_transform(X_train)
+
 
 #-------------- Validation split from train sequences --------------
 
-print(f"Loaded — X_train: {X_train.shape}")
+print(f"Loaded — X_train: {X_train_scaled.shape}")
 print(f"Loaded — y_train: {y_train.shape}")
 
-val_split  = int(len(X_train) * (1 - VAL_RATIO))
+val_split  = int(len(X_train_scaled) * (1 - VAL_RATIO))
 
-X_tr  = X_train[:val_split]
+X_tr  = X_train_scaled[:val_split]
 y_tr  = y_train[:val_split]
-X_val = X_train[val_split:]
+X_val = X_train_scaled[val_split:]
 y_val = y_train[val_split:]
 
 print(f"\nX_tr:  {X_tr.shape}   y_tr:  {y_tr.shape}")
@@ -342,7 +330,8 @@ X_test, y_test = get_X_y(
 )
 
 # Evaluate model on test set
-loss, mae, mse = model_lstm.evaluate(X_test, y_test, verbose=1)
+X_test_scaled = scaler.transform(X_test)
+loss, mae, mse = model_lstm.evaluate(X_test_scaled, y_test, verbose=1)
 
 
 print("Test Loss:", loss)
