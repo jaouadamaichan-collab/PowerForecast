@@ -51,7 +51,7 @@ MODEL_NAME = "lstm_2"
 
 fit_scaler = True  # set to False to skip scaling (useful for debugging)
 resample_sequences = True
-train_new_model = True  # set to True to skip training and load existing model
+train_new_model = True  # set to False to load existing model and skip training (must have been trained at least once with train_new_model=True to have the files)
 
 
 model_name = f"{MODEL_NAME}_{TARGET_COL}_in{INPUT_LENGTH}_out{OUTPUT_LENGTH}_h{HORIZON}"
