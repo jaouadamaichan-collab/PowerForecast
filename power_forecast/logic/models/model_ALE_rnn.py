@@ -31,10 +31,12 @@ OUTPUT_LENGTH    = 48          # predict 24h of target day
 HORIZON          = 0          # skip 24h between input end and output
 TRAIN_TEST_RATIO = 0.98       # 98% of sequences → train, 2% → test
 VAL_RATIO        = 0.1         # 10% of train sequences → validation
-SAMPLING_RATIO = 0.7  
-STRIDE_TRAIN  = 48        # advance 1 day between train sequences
-STRIDE_TEST   = 48        # advance 1 day between test sequences (deterministic)
+STRIDE_TRAIN  = 48        # advance 2 day between train sequences
+STRIDE_TEST   = 48        # advance 2 day between test sequences (deterministic)
+
+
 # sample 70% of possible sequences (for faster training; set to 1.0 to use all)
+PATIENCE = 10
 BATCH_SIZE = 64
 EPOCHS = 100
 MODEL_NAME    = "lstm" 
@@ -64,7 +66,7 @@ print("Data start:", df.index.min())
 print("Data end:  ", df.index.max())
 print("Total rows:", len(df))
 
-cutoff = pd.Timestamp("2024-01-01", tz="UTC")
+cutoff = pd.Timestamp("2023-10-01", tz="UTC")
 
 fold_train = df[df.index <  cutoff].copy()
 fold_test  = df[df.index >= cutoff - pd.Timedelta(hours=INPUT_LENGTH)].copy()
@@ -74,6 +76,11 @@ print(f"fold_test:  {len(fold_test)} rows   {fold_test.index[0]} → {fold_test.
 print(f"First y_test label: {fold_test.index[INPUT_LENGTH + HORIZON]}")
 
 
+# Scale before sampling sequences, also the target column
+# It will be scaled back to real values at the end for evaluation and plotting.
+scaler = StandardScaler()
+fold_train[feature_cols] = scaler.fit_transform(fold_train[feature_cols])
+fold_test[feature_cols]  = scaler.transform(fold_test[feature_cols])
 
 
 
@@ -92,6 +99,7 @@ if resample_sequences == False:
     y_train = np.load(SAVE_SEQUENCES / "y_train.npy")
     print(f"Loaded — X_train: {X_train.shape}")
     print(f"Loaded — y_train: {y_train.shape}")
+
 
 
 
@@ -173,37 +181,23 @@ if resample_sequences:
 
 
 
-## ------------------- Standardize features -------------------
-
-
-scaler = StandardScaler()
-X_train_scaled = scaler.fit_transform(X_train)
-
 
 #-------------- Validation split from train sequences --------------
 
-print(f"Loaded — X_train: {X_train_scaled.shape}")
+print(f"Loaded — X_train: {X_train.shape}")
 print(f"Loaded — y_train: {y_train.shape}")
 
-val_split  = int(len(X_train_scaled) * (1 - VAL_RATIO))
+val_split  = int(len(X_train) * (1 - VAL_RATIO))
 
-X_tr  = X_train_scaled[:val_split]
+X_tr  = X_train[:val_split]
 y_tr  = y_train[:val_split]
-X_val = X_train_scaled[val_split:]
+X_val = X_train[val_split:]
 y_val = y_train[val_split:]
 
 print(f"\nX_tr:  {X_tr.shape}   y_tr:  {y_tr.shape}")
 print(f"X_val: {X_val.shape}  y_val: {y_val.shape}")
 
 
-#------------------- CREATE AND TRAIN RNN -------------------
-
-# Variable to see if we want to train a new model or load an existing one.
-train_new_model = True  # set to True to skip training and load existing model
-# model_name = f"{MODEL_NAME}_{TARGET_COL}_in{INPUT_LENGTH}_out{OUTPUT_LENGTH}_h{HORIZON}"
-MODEL_NAME    = "lstm"  
-BATCH_SIZE = 64
-EPOCHS = 50
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -235,7 +229,7 @@ def initialize_model_lstm(input_shape, output_length):
     return model
 
 
-early_stopping = EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True)
+early_stopping = EarlyStopping(monitor='val_loss', patience=PATIENCE, restore_best_weights=True)
 
 def train_or_load_model_lstm(train_new_model, X_tr, y_tr, X_val, y_val,
                         OUTPUT_LENGTH, EPOCHS, BATCH_SIZE,
@@ -282,10 +276,34 @@ X_test, y_test = get_X_y(fold_test, feature_cols, TARGET_COL, STRIDE_TEST,
                         INPUT_LENGTH, HORIZON, OUTPUT_LENGTH)
 
 # Evaluate model on test set
-X_test_scaled = scaler.transform(X_test)
-loss, mae, mse = model_lstm.evaluate(X_test_scaled, y_test, verbose=1)
+loss, mae, mse = model_lstm.evaluate(X_test, y_test, verbose=1)
 
 
 print("Test Loss:", loss)
 print("Test MAE:", mae)
 print("Test MSE:", mse)
+
+target_idx = feature_cols.index(TARGET_COL)
+
+# inverse transform both
+y_test_real = y_test  * scaler.scale_[target_idx] + scaler.mean_[target_idx]
+y_pred       = model_lstm.predict(X_test)
+y_pred_real  = y_pred * scaler.scale_[target_idx] + scaler.mean_[target_idx]
+
+# print sequence by sequence, hour by hour
+# reconstruct start indices the same way get_X_y does
+total_span = INPUT_LENGTH + HORIZON + OUTPUT_LENGTH
+max_start  = len(fold_test) - total_span
+starts     = list(range(0, max_start + 1, STRIDE_TEST))
+
+# print sequence by sequence, hour by hour
+for seq_idx in range(len(y_test_real)):
+    start_idx = starts[seq_idx]
+    y_start   = start_idx + INPUT_LENGTH + HORIZON
+
+    print(f"\n── Sequence {seq_idx} ──────────────────────────────")
+    for hour in range(OUTPUT_LENGTH):
+        timestamp = fold_test.index[y_start + hour]
+        real      = y_test_real[seq_idx, hour]
+        predicted = y_pred_real[seq_idx, hour]
+        print(f"  {timestamp} | Real: {real:>8.2f} EUR/MWh | Predicted: {predicted:>8.2f} EUR/MWh")
