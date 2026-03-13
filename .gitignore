@@ -15,3 +15,5 @@ notebooks/
 agents/
 *.ipynb
 *.egg-info/
+.DS_Store
+analysis_runs.py
