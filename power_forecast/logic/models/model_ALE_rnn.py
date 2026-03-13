@@ -8,8 +8,10 @@ from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.layers import LSTM, Dense, Dropout
 from tensorflow.keras.callbacks import EarlyStopping
 from tensorflow.keras import Sequential, Input
-from tensorflow.keras.layers import Dense, SimpleRNN, Normalization, LSTM
+from tensorflow.keras.layers import Dense, SimpleRNN, Normalization, LSTM, Dropout, BatchNormalization
 from tensorflow.keras.models import load_model
+from tensorflow.keras.losses import Huber
+from tensorflow.keras.optimizers import Adam
 from pathlib import Path
 from datetime import datetime
 import random
@@ -24,16 +26,20 @@ df = build_feature_dataframe('raw_data/all_countries.csv', load_from_pickle=True
 TARGET_COL       = "FRA"
 feature_cols = [c for c in df.columns if c != TARGET_COL]
 
-INPUT_LENGTH     = 7 * 24      # 168h context fed to RNN
-OUTPUT_LENGTH    = 24          # predict 24h of target day
-HORIZON          = 24          # skip 24h between input end and output
+INPUT_LENGTH     = 14 * 24      # 168h context fed to RNN
+OUTPUT_LENGTH    = 48          # predict 24h of target day
+HORIZON          = 0          # skip 24h between input end and output
 TRAIN_TEST_RATIO = 0.98       # 98% of sequences → train, 2% → test
 VAL_RATIO        = 0.1         # 10% of train sequences → validation
-SAMPLING_RATIO = 0.7         # sample 70% of possible sequences (for faster training; set to 1.0 to use all)
+SAMPLING_RATIO = 0.8  
+# sample 70% of possible sequences (for faster training; set to 1.0 to use all)
 BATCH_SIZE = 64
 EPOCHS = 50
+MODEL_NAME    = "lstm" 
 
-MODEL_NAME    = "lstm"  
+fit_scaler = True  # set to False to skip scaling (useful for debugging)
+resample_sequences = True
+train_new_model = True  # set to True to skip training and load existing model
 
 
 model_name = f"{MODEL_NAME}_{TARGET_COL}_in{INPUT_LENGTH}_out{OUTPUT_LENGTH}_h{HORIZON}"
@@ -45,6 +51,10 @@ SAVE_SEQUENCES = Path("raw_data/sequences")
 SAVE_SEQUENCES.mkdir(parents=True, exist_ok=True)
 MODEL_PATH = Path(f"raw_data/models/{model_name}.keras")
 MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+
+
+
 
 ##-------------------- Train - Test split based on input day --------------------
 
@@ -257,16 +267,22 @@ EPOCHS = 50
 def initialize_model_lstm(input_shape, output_length):
     model = Sequential([
         Input(shape=input_shape),
-        LSTM(64, activation='tanh', return_sequences=True),  # return full sequence to next LSTM
-        LSTM(32, activation='tanh', return_sequences=False), # compress to final hidden state
+        LSTM(128, activation='tanh', return_sequences=True, 
+            recurrent_dropout=0.1),          # dropout on recurrent connections
+        Dropout(0.2),
+        LSTM(64, activation='tanh', return_sequences=True,
+            recurrent_dropout=0.1),
+        LSTM(32, activation='tanh', return_sequences=False),
+        Dropout(0.2),
         Dense(64, activation='relu'),
+        BatchNormalization(),
         Dense(32, activation='relu'),
         Dense(output_length, activation='linear')
     ])
-
+    optimizer = Adam(learning_rate=1e-3, clipnorm=1.0)
     model.compile(
-        optimizer='adam',
-        loss='mae',
+        optimizer=optimizer,
+        loss=Huber(delta=1.0),   # behaves like MAE for large errors, MSE for small ones
         metrics=['mae', 'mse']
     )
     model.summary()
