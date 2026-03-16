@@ -49,6 +49,9 @@ df_rnn = add_features_RNN(
     add_future_meteo=True,
 )
 
+df= df_rnn
+df.head()
+
 from typing import Dict, List, Tuple, Sequence
 import numpy as np
 import tensorflow as tf
