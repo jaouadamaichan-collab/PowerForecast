@@ -114,7 +114,16 @@ def add_catch24_features(df, window=WINDOW_CATCH22, step=STEP_CATCH22, time_inte
     features_df.index        = features_df.index.normalize()
     features_df.index.name   = "_date"
 
-    df_enriched = df_enriched.merge(features_df, left_on="_date", right_index=True, how="left")
+     # ── Merge optimisé : ne travailler que sur l'index ────────────────────────
+    df_enriched = df.copy()
+    df_enriched["_date"] = df_enriched.index.normalize()
+
+    # Merge uniquement les nouvelles colonnes catch24, pas tout le df
+    df_enriched = df_enriched.join(
+        features_df,
+        on="_date",
+        how="left"
+    )
     df_enriched = df_enriched.drop(columns=["_date"])
 
     return df_enriched
