@@ -82,28 +82,22 @@ print(f"\nShape après feature selection : {df_selected.shape}")
 # Configuration globale du jeu de données             #
 # --------------------------------------------------- #
 
-TARGET = 'FRA'        # Colonne cible à prédire (consommation électrique France)
-N_TARGETS = 1         # Prédiction d'un seul pas de temps à l'avance
-N_FEATURES = 101      # Nombre de features en entrée (tous les pays + features construites)
+TARGET          = 'FRA'
+N_FEATURES      = df_selected.shape[1]
 
-# --------------------------------------------------- #
-# Configuration des folds                             #
-# Chaque fold couvre 2 ans de données horaires        #
-# --------------------------------------------------- #
-
-FOLD_LENGTH = 24 * 365 * 2   # 2 ans de données horaires = 17 520 pas de temps
-
-# --------------------------------------------------- #
-# Un nouveau fold est créé tous les trimestres        #
-# --------------------------------------------------- #
-
-FOLD_STRIDE = 24 * 91        # 1 trimestre = 91 jours = 2 184 pas de temps
-
-# --------------------------------------------------- #
-# 70% de chaque fold est utilisé pour l'entraînement  #
-# --------------------------------------------------- #
-
+FOLD_LENGTH      = 24 * 365 * 2   # 2 ans (~17 520h, proche des 17 000h de [2])
+FOLD_STRIDE      = 24 * 91        # 1 trimestre entre chaque fold
 TRAIN_TEST_RATIO = 0.7
+
+# INPUT_LENGTH = 96h — fenêtre physiquement motivée par [2] (section IV) :
+# à 4 jours, les prix sont gaussiens.
+INPUT_LENGTH    = 96    # 4 jours
+OUTPUT_LENGTH   = 1
+SEQUENCE_STRIDE = 24    # 1 pas/jour
+DAY_AHEAD_GAP   = 24    # Prévision J+1
+
+
+print(f"N_FEATURES = {N_FEATURES} | INPUT_LENGTH = {INPUT_LENGTH}h = {INPUT_LENGTH//24} jours")
 
 
 def get_folds(
@@ -143,11 +137,8 @@ folds = get_folds(df, FOLD_LENGTH, FOLD_STRIDE)
 print(f'The function generated {len(folds)} folds.')
 print(f'Each fold has a shape equal to {folds[0].shape}.')
 
-fold = folds[0]
-fold
 
-# INPUT_LENGTH : le modèle observe les 2 dernières semaines (336 pas horaires) pour prédire
-INPUT_LENGTH = 24 * 14  # 2 semaines de données horaires = 336 pas de temps
+
 
 
 def train_test_split(fold: pd.DataFrame,
@@ -187,7 +178,8 @@ def train_test_split(fold: pd.DataFrame,
 # Résumé des dimensions des séquences
 print(f'N_FEATURES = {N_FEATURES}')
 print(f'INPUT_LENGTH = {INPUT_LENGTH} timesteps = {int(INPUT_LENGTH)/24} days = {int(INPUT_LENGTH/24/7)} weeks')
-print(f'N_TARGETS = {N_TARGETS}')
+
+
 
 # On prédit exactement 1 valeur, 24h après la fin de la fenêtre d'entrée
 OUTPUT_LENGTH = 1
@@ -502,7 +494,6 @@ print(f"🔥 Improvement of the LSTM model over the baseline (on this fold for t
 
 # Récapitulatif de tous les hyperparamètres globaux pour la reproductibilité
 print(f'N_FEATURES = {N_FEATURES}')
-print(f'N_TARGETS = {N_TARGETS}')
 print('')
 print(f'FOLD_LENGTH = {FOLD_LENGTH}')
 print(f'FOLD_STRIDE = {FOLD_STRIDE}')
