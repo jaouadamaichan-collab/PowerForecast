@@ -150,7 +150,6 @@ def add_target_horizon_features(df: pd.DataFrame, iso_objective: str, target_day
     for col in meteo_cols:
         df[f"target_{col}"] = df[col].shift(-H)
 
-
     return df
 
 
@@ -181,7 +180,7 @@ def add_lag_and_contexte_features_frontiere(df: pd.DataFrame, iso_objective: str
         new_cols[f'{iso_objective}_lag_{lag}h'] = df[iso_objective].shift(lag)
 
     for w in ROLLING_WINDOWS_FRONTIERE:
-        base = df[iso_objective].shift(1)  # shift(1) anti-leakage
+        base = df[iso_objective].shift(48)  # shift(1) anti-leakage
         roll_min = base.rolling(w).min()
         roll_max = base.rolling(w).max()
 
@@ -194,7 +193,7 @@ def add_lag_and_contexte_features_frontiere(df: pd.DataFrame, iso_objective: str
     return pd.concat([df, pd.DataFrame(new_cols, index=df.index)], axis=1)
 
 
-def add_catch24_features(df, window=WINDOW_CATCH22, step=STEP_CATCH22, time_interval="hourly", country='FRA'):
+def add_catch24_features(df, window=WINDOW_CATCH22, step=STEP_CATCH22, time_interval="h", country='FRA'):
     """
     Extracts catch24 features using a rolling window and merges them back
     into the original dataframe, broadcasting daily features to all

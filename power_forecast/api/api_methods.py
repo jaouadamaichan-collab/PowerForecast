@@ -2,7 +2,7 @@ import pandas as pd
 from power_forecast.params import *
 
 
-def prepare_X_new(date_str: str, test_fold: pd.DataFrame, horizon: int = 24, input_length: int = 24 * 14) -> pd.DataFrame:
+def prepare_X_new(date_str: str, test_fold: pd.DataFrame, horizon: int = HORIZON, input_length: int = INPUT_LENGTH) -> pd.DataFrame:
     """
     Prepare X_new for predicting electricity prices for a given target day.
 

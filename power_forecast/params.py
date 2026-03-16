@@ -1,38 +1,51 @@
 import os
 from pathlib import Path
 
-#Params catch22
-WINDOW_CATCH22 = 7  # in days, for hourly data this means 168 hours
-STEP_CATCH22 = 1  # in days, for hourly data this means
+# ── Paramètres globaux ───────────────────────────────────────────────────────────────
+INPUT_LENGTH = 14 * 24  # 2 weeks context fed to RNN
+OUTPUT_LENGTH = 24  # predict 24h of target day
+HORIZON = 24  # skip 24h between input end and output
+
 VALID_STEPS = {"h", "D"}
 
-PICKLE_DIR     = Path("raw_data/pickle_files")
-METEO_CACHE_DIR = PICKLE_DIR / "meteo_cache"   # ← build from PICKLE_DIR, don't hardcode
-METEO_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-
-# Outliers limits
+# Outliers limits of electricity prices
 LIMIT_LOW = -350
 LIMIT_HIGH = 900
 
-MAX_LAG_BACK = 336  # in hours, corresponds to 2 semaines (même heure)
-LAGS_TARGET = [
-    1,
-    2,
-    3,  # court terme
-    6,
-    12,
-    24,  # intra-journalier
-    48,
-    72,  # 2-3 jours
+# in hours, corresponds to 2 semaines (même heure)
+
+# XGB Lags must be higher than 24h x target distance to avoid leakage, and not too high to keep some signal.
+# We keep 48h, 72h and 168h (1 week) for the neighboring countries, and add more lags for the target country itself since it has more signal.
+LAGS_XGB_TARGET = [
+    48,  # same hour 2 days ago, to capture the weekly seasonality and the target distance
+    49,  # 1 hour before the same hour 2 days ago, to capture the hourly seasonality and the target distance
+    50,  # 2 hours before the same hour 2 days ago, to capture the hourly seasonality and the target distance
+    51,
+    54,
+    60,
+    72,
     168,
-    336,  # 1, 2 semaines (même heure)
 ]
 
-LAGS_FRONTIERE = [
-    48,
-    72,  # 2-3 jours
-    168,
+MAX_LAG_BACK_XGB = LAGS_XGB_TARGET[-1]
+
+ROLLING_WINDOWS_XGB_TARGET = [6, 12, 24, 48, 62, 96]
+
+LAGS_XGB_FRONTIERE = [
+    48,  # same hour 2 days ago, to capture the weekly seasonality and the target distance
+    49,  # 1 hour before the same hour 2 days ago, to capture the hourly seasonality and the target distance
+    72,
 ]
+
+ROLLING_WINDOWS_XGB_FRONTIERE = [
+    12,
+    24,
+    48,
+]
+
+
+
+
 
 DROP_COLUMN_NAN_TRESHOLD = 0.05  # Drop columns with more than 5% NaN
 
@@ -41,9 +54,38 @@ ROLLING_WINDOWS_TARGET = [6, 12, 24, 48, 62, 120]  # en heures
 
 ROLLING_WINDOWS_FRONTIERE = [48, 62, 120]  # en heuresGB
 
-VALID = ['AUT', 'BEL', 'BGR', 'CHE', 'CZE', 'DEU', 'DNK', 'ESP', 'EST', 'FIN',
-         'FRA', 'GRC', 'HRV', 'HUN', 'IRL', 'ITA', 'LTU', 'LUX', 'LVA', 'NLD',
-         'NOR', 'POL', 'PRT', 'ROU', 'SRB', 'SVK', 'SVN', 'SWE']
+
+# ISO codes of countries to predict (must be in ENTSOE and COUNTRY_LABELS)
+VALID = [
+    "AUT",
+    "BEL",
+    "BGR",
+    "CHE",
+    "CZE",
+    "DEU",
+    "DNK",
+    "ESP",
+    "EST",
+    "FIN",
+    "FRA",
+    "GRC",
+    "HRV",
+    "HUN",
+    "IRL",
+    "ITA",
+    "LTU",
+    "LUX",
+    "LVA",
+    "NLD",
+    "NOR",
+    "POL",
+    "PRT",
+    "ROU",
+    "SRB",
+    "SVK",
+    "SVN",
+    "SWE",
+]
 
 FRONTIERE = {
     "AUT": ["CHE", "DEU", "CZE", "SVK", "HUN", "SVN", "ITA"],
@@ -51,7 +93,19 @@ FRONTIERE = {
     "BGR": ["ROU", "SRB", "GRC"],
     "CHE": ["FRA", "DEU", "AUT", "ITA"],
     "CZE": ["DEU", "POL", "SVK", "AUT"],
-    "DEU": ["DNK", "NLD", "BEL", "LUX", "FRA", "CHE", "AUT", "CZE", "POL", "SWE", "NOR"],
+    "DEU": [
+        "DNK",
+        "NLD",
+        "BEL",
+        "LUX",
+        "FRA",
+        "CHE",
+        "AUT",
+        "CZE",
+        "POL",
+        "SWE",
+        "NOR",
+    ],
     "DNK": ["DEU", "SWE", "NOR", "NLD"],
     "ESP": ["FRA", "PRT"],
     "EST": ["LVA", "LTU", "FIN"],
@@ -85,23 +139,23 @@ OBJ_ISO_TO_ENTSOE = {
     "DEU": "DE_LU",
     "DNK": "DK",
     "ESP": "ES",
-    "EST": None,   # not in COUNTRY_LABELS
+    "EST": None,  # not in COUNTRY_LABELS
     "FIN": "FI",
     "FRA": "FR",
     "GRC": "GR",
     "HRV": "HR",
     "HUN": "HU",
-    "IRL": None,   # not in COUNTRY_LABELS
+    "IRL": None,  # not in COUNTRY_LABELS
     "ITA": "IT",
-    "LTU": None,   # not in COUNTRY_LABELS
-    "LUX": "DE_LU",   # merged into DE_LU
-    "LVA": None,   # not in COUNTRY_LABELS
+    "LTU": None,  # not in COUNTRY_LABELS
+    "LUX": "DE_LU",  # merged into DE_LU
+    "LVA": None,  # not in COUNTRY_LABELS
     "NLD": "NL",
     "NOR": "NO",
     "POL": "PL",
     "PRT": "PT",
     "ROU": "RO",
-    "SRB": None,   # not in COUNTRY_LABELS
+    "SRB": None,  # not in COUNTRY_LABELS
     "SVK": "SK",
     "SVN": "SI",
     "SWE": "SE",
@@ -115,6 +169,7 @@ FRONTIERE = {
 }
 
 
+# Manual crisis periods to add as features (list of tuples with start and end dates)
 CRISIS_PERIODS = [
     ("2015-01-01", "2016-06-30"),
     ("2020-03-01", "2020-12-31"),
@@ -122,6 +177,11 @@ CRISIS_PERIODS = [
     ("2023-10-01", "2024-03-31"),
 ]
 
+
+# Params catch22
+WINDOW_CATCH22 = 7  # in days, for hourly data this means 168 hours
+STEP_CATCH22 = 1  # in days, for hourly data this means
+TIMESTAMP_CATCH22 = 'h'
 
 # Variables Météo
 
@@ -271,5 +331,28 @@ COUNTRY_HOLIDAY_MAP = {
     "SWE": "SE",
 }
 
-LOCAL_DATA_PATH = os.path.join(os.path.expanduser('~'), ".lewagon", "mlops", "data")
-LOCAL_REGISTRY_PATH = os.path.join(os.path.expanduser('~'), ".lewagon", "mlops", "models")
+
+LOCAL_DATA_PATH = os.path.join(os.path.expanduser("~"), ".lewagon", "mlops", "data")
+LOCAL_REGISTRY_PATH = os.path.join(
+    os.path.expanduser("~"), ".lewagon", "mlops", "models"
+)
+
+
+PICKLE_DIR = Path("raw_data/pickle_files")
+METEO_CACHE_DIR = PICKLE_DIR / "meteo_cache"  # ← build from PICKLE_DIR, don't hardcode
+METEO_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+
+LAGS_TARGET = [
+    48,
+    49,
+    72,  # 2-3 jours
+    168,
+    336,  # 1, 2 semaines (même heure)
+]
+
+LAGS_FRONTIERE = [
+    48,
+    72,  # 2-3 jours
+    168,
+]

@@ -3,31 +3,26 @@ import pandas as pd
 from power_forecast.logic.get_data.kaggle_df import create_df_from_local_csv
 from power_forecast.logic.get_data.time_features import (
     replace_outliers_with_interpolation,
-    add_temporal_features,
     add_public_holidays,
-    add_target_horizon_features,
-    add_catch24_features,
-    add_lag_and_contexte_features_target,
-    add_lag_and_contexte_features_frontiere,
     filter_neighbor_columns,
     add_crisis_column,
-    drop_boundary_nans)
+    add_catch24_features)
 from power_forecast.logic.get_data.meteo_features import get_meteo
 from power_forecast.logic.get_data.entsoe_features import get_gen_load_forecast
 from power_forecast.params import *
-from power_forecast.logic.utils.others import load_df, save_df
+
 
 
 
 def build_common_dataframe(
-    filepath: str,
-    country_objective: str = "France",
+    filepath:      str,
+    country_objective: str  = 'France',
     target_day_distance: int = 2,
-    time_interval: str = "h",
+    time_interval: str  = 'h',
     keep_only_neighbors: bool = True,
     add_meteo: bool = True,
     add_crisis: bool = True,
-    add_entsoe: bool = False,  # ATTENTION: PAS SURE D'AVOIR CA POUR LE FUTUR
+    add_entsoe: bool = False, # ATTENTION: PAS SURE D'AVOIR CA POUR LE FUTUR
 ) -> pd.DataFrame:
     """
     Build a common feature dataframe for electricity price forecasting.
@@ -72,9 +67,7 @@ def build_common_dataframe(
     iso_objective = VILLE_TO_ISO.get(country_objective, None)
     iso_entsoe = OBJ_ISO_TO_ENTSOE.get(iso_objective, None)
     if iso_objective is None or iso_entsoe is None:
-        raise ValueError(
-            f"Country '{country_objective}' not recognized. Available options: {VILLES_DISPONIBLES}"
-        )
+        raise ValueError(f"Country '{country_objective}' not recognized. Available options: {VILLES_DISPONIBLES}")
 
     # ── 1. Create base dataframe from local CSV ───────────────────────────────
     df = create_df_from_local_csv(filepath)
@@ -84,22 +77,15 @@ def build_common_dataframe(
         df = filter_neighbor_columns(df, iso=iso_objective)
 
     # ── 3. Replace outliers with interpolation ────────────────────────────────
-    df = replace_outliers_with_interpolation(
-        df, limit_low=LIMIT_LOW, limit_high=LIMIT_HIGH
-    )
+    df = replace_outliers_with_interpolation(df, limit_low=LIMIT_LOW, limit_high=LIMIT_HIGH)
 
     # Define date range for meteo and entsoe data
     date_start = df.index.min().strftime("%Y-%m-%d")
-    date_end = (df.index.max() + pd.Timedelta(days=1 + target_day_distance)).strftime(
-        "%Y-%m-%d"
-    )
+    date_end   = (df.index.max() + pd.Timedelta(days=1 + target_day_distance)).strftime("%Y-%m-%d")
 
     # ── 4. Add meteo features ─────────────────────────────────────────────────
     if add_meteo:
-        meteo_cache_path = (
-            Path("raw_data/pickle_files/meteo_cache")
-            / f"meteo_{country_objective}_{date_start}_{date_end}_{time_interval}.pkl"
-        )
+        meteo_cache_path = Path("raw_data/pickle_files/meteo_cache") / f"meteo_{country_objective}_{date_start}_{date_end}_{time_interval}.pkl"
 
         if meteo_cache_path.exists():
             print(f"  ✓ Meteo cache found, loading from {meteo_cache_path}")
@@ -113,19 +99,14 @@ def build_common_dataframe(
 
     # ── 5. Add ENTSOE generation/load forecast features ───────────────────────
     if add_entsoe:
-        entsoe_cache_path = (
-            Path("raw_data/pickle_files/entsoe_cache")
-            / f"entsoe_{country_objective}_{date_start}_{date_end}_{time_interval}.pkl"
-        )
+        entsoe_cache_path = Path("raw_data/pickle_files/entsoe_cache") / f"entsoe_{country_objective}_{date_start}_{date_end}_{time_interval}.pkl"
 
         if entsoe_cache_path.exists():
             print(f"  ✓ Entsoe cache found, loading from {entsoe_cache_path}")
             df_entsoe = pd.read_pickle(entsoe_cache_path)
         else:
             print(f"  ✗ Entsoe cache not found, fetching...")
-            df_entsoe = get_gen_load_forecast(
-                iso_entsoe, date_start, date_end, step=time_interval
-            )
+            df_entsoe = get_gen_load_forecast(iso_entsoe, date_start, date_end, step=time_interval)
             entsoe_cache_path.parent.mkdir(parents=True, exist_ok=True)
             df_entsoe.to_pickle(entsoe_cache_path)
             print(f"  ✓ Entsoe saved to {entsoe_cache_path}")
@@ -134,9 +115,7 @@ def build_common_dataframe(
     if add_crisis:
         df_crisis = add_crisis_column(date_start, date_end, timezone="UTC")
 
-    df_holidays = add_public_holidays(
-        iso_objective, date_start, date_end, timezone="UTC"
-    )
+    df_holidays = add_public_holidays(iso_objective, date_start, date_end, timezone="UTC")
 
     # ── 7. Merge all features into a single dataframe ─────────────────────────
     frames = {"holidays": df_holidays}
@@ -148,28 +127,30 @@ def build_common_dataframe(
     if add_crisis:
         frames["crisis"] = df_crisis
 
+    # Normalize all frame indexes to UTC first
     for name, frame in frames.items():
         if frame.index.tz is None:
             frame.index = frame.index.tz_localize("UTC")
         else:
             frame.index = frame.index.tz_convert("UTC")
-        df = df.join(frame, how="left")
+
+    # Single concat, then filter to original df index (left join equivalent)
+    all_frames = [df] + list(frames.values())
+    df = pd.concat(all_frames, axis=1).reindex(df.index)
 
     # ── 8. Drop columns with too many NaN ────────────────────────────────────
     nan_ratio = df.isna().mean()
     cols_to_drop = nan_ratio[nan_ratio > DROP_COLUMN_NAN_TRESHOLD].index.tolist()
     df = df.drop(columns=cols_to_drop)
-    print(
-        f"  Dropped {len(cols_to_drop)} columns with >{DROP_COLUMN_NAN_TRESHOLD*100:.0f}% NaN: {cols_to_drop}"
-    )
+    print(f"  Dropped {len(cols_to_drop)} columns with >{DROP_COLUMN_NAN_TRESHOLD*100:.0f}% NaN: {cols_to_drop}")
 
     # ── 9. Deduplicate columns and rows ───────────────────────────────────────
-    df = df.loc[:, ~df.columns.duplicated(keep="first")]
-    df = df[~df.index.duplicated(keep="first")]
+    df = df.loc[:, ~df.columns.duplicated(keep='first')]
+    df = df[~df.index.duplicated(keep='first')]
 
     # ── 10. Interpolate remaining NaN ─────────────────────────────────────────
     nan_before = df.isna().sum().sum()
-    df = df.interpolate(method="time")
+    df = df.interpolate(method='time')
     df = df.bfill()
     nan_after = df.isna().sum().sum()
     print(f"  Interpolated NaN: {nan_before} → {nan_after} remaining")
@@ -178,10 +159,9 @@ def build_common_dataframe(
 
     return df
 
-
 def add_features_XGB(
     df: pd.DataFrame,
-    country_objective: str,
+    iso_objective: str,
     target_day_distance: int,
     add_lag_frontiere: bool = False,
     drop_initial_nans: bool = False,
@@ -218,56 +198,43 @@ def add_features_XGB(
     df = df.copy()
     idx = df.index
     H = target_day_distance * 24
-    iso_objective = VILLE_TO_ISO.get(country_objective, None)
 
     # ── 1. Cyclical time encodings ────────────────────────────────────────
-    df["hour_sin"] = np.sin(2 * np.pi * idx.hour / 24)
-    df["hour_cos"] = np.cos(2 * np.pi * idx.hour / 24)
+    df["hour_sin"]        = np.sin(2 * np.pi * idx.hour / 24)
+    df["hour_cos"]        = np.cos(2 * np.pi * idx.hour / 24)
     df["day_of_week_sin"] = np.sin(2 * np.pi * idx.dayofweek / 7)
     df["day_of_week_cos"] = np.cos(2 * np.pi * idx.dayofweek / 7)
-    df["month_sin"] = np.sin(2 * np.pi * (idx.month - 1) / 12)
-    df["month_cos"] = np.cos(2 * np.pi * (idx.month - 1) / 12)
+    df["month_sin"]       = np.sin(2 * np.pi * (idx.month - 1) / 12)
+    df["month_cos"]       = np.cos(2 * np.pi * (idx.month - 1) / 12)
     df["day_of_year_sin"] = np.sin(2 * np.pi * idx.dayofyear / 365)
     df["day_of_year_cos"] = np.cos(2 * np.pi * idx.dayofyear / 365)
 
     # ── 2. Binary flags ───────────────────────────────────────────────────
-    df["is_weekend"] = (idx.dayofweek >= 5).astype(int)
-    df["is_monday"] = (idx.dayofweek == 0).astype(int)
-    df["is_peak_hour"] = idx.hour.isin(range(8, 20)).astype(int)  # 08:00–20:00
-    df["is_offpeak_hour"] = idx.hour.isin(range(0, 8)).astype(int)  # 00:00–08:00
-    df["is_summer"] = idx.month.isin([6, 7, 8]).astype(int)
-    df["is_winter"] = idx.month.isin([12, 1, 2]).astype(int)
+    df["is_weekend"]      = (idx.dayofweek >= 5).astype(int)
+    df["is_monday"]       = (idx.dayofweek == 0).astype(int)
+    df["is_peak_hour"]    = idx.hour.isin(range(8, 20)).astype(int)   # 08:00–20:00
+    df["is_offpeak_hour"] = idx.hour.isin(range(0, 8)).astype(int)    # 00:00–08:00
+    df["is_summer"]       = idx.month.isin([6, 7, 8]).astype(int)
+    df["is_winter"]       = idx.month.isin([12, 1, 2]).astype(int)
 
     # ── 3 & 4. Lag and rolling features on target price ───────────────────
     target_lags_col = {}
 
     for lag in LAGS_XGB_TARGET:
-        target_lags_col[f"{iso_objective}_lag_{lag}h"] = df[iso_objective].shift(lag)
+        target_lags_col[f'{iso_objective}_lag_{lag}h'] = df[iso_objective].shift(lag)
 
     for w in ROLLING_WINDOWS_XGB_TARGET:
-        base = df[iso_objective].shift(H)
+        base     = df[iso_objective].shift(H)
         roll_min = base.rolling(w).min()
         roll_max = base.rolling(w).max()
 
-        target_lags_col[
-            f"{iso_objective}_roll_mean_{w}h_from_{target_day_distance}d_ago"
-        ] = base.rolling(w).mean()
-        target_lags_col[
-            f"{iso_objective}_roll_std_{w}h_from_{target_day_distance}d_ago"
-        ] = base.rolling(w).std()
-        target_lags_col[
-            f"{iso_objective}_roll_min_{w}h_from_{target_day_distance}d_ago"
-        ] = roll_min
-        target_lags_col[
-            f"{iso_objective}_roll_max_{w}h_from_{target_day_distance}d_ago"
-        ] = roll_max
-        target_lags_col[
-            f"{iso_objective}_roll_range_{w}h_from_{target_day_distance}d_ago"
-        ] = (roll_max - roll_min)
+        target_lags_col[f'{iso_objective}_roll_mean_{w}h_from_{target_day_distance}d_ago']  = base.rolling(w).mean()
+        target_lags_col[f'{iso_objective}_roll_std_{w}h_from_{target_day_distance}d_ago']   = base.rolling(w).std()
+        target_lags_col[f'{iso_objective}_roll_min_{w}h_from_{target_day_distance}d_ago']   = roll_min
+        target_lags_col[f'{iso_objective}_roll_max_{w}h_from_{target_day_distance}d_ago']   = roll_max
+        target_lags_col[f'{iso_objective}_roll_range_{w}h_from_{target_day_distance}d_ago'] = roll_max - roll_min
 
-    df_with_lags = pd.concat(
-        [df, pd.DataFrame(target_lags_col, index=df.index)], axis=1
-    )
+    df_with_lags = pd.concat([df, pd.DataFrame(target_lags_col, index=df.index)], axis=1)
 
     # ── 5. Lag and rolling features on neighboring countries ──────────────
     frontiere_list = FRONTIERE[iso_objective]
@@ -280,26 +247,20 @@ def add_features_XGB(
                 continue
 
             for lag in LAGS_XGB_FRONTIERE:
-                frontiere_lags_col[f"{neighbor}_lag_{lag}h"] = df[neighbor].shift(lag)
+                frontiere_lags_col[f'{neighbor}_lag_{lag}h'] = df[neighbor].shift(lag)
 
             for w in ROLLING_WINDOWS_FRONTIERE:
-                base = df[neighbor].shift(H)
+                base     = df[neighbor].shift(H)
 
-                frontiere_lags_col[
-                    f"{neighbor}_roll_mean_{w}h_from_{target_day_distance}d_ago"
-                ] = base.rolling(w).mean()
-                frontiere_lags_col[
-                    f"{neighbor}_roll_std_{w}h_from_{target_day_distance}d_ago"
-                ] = base.rolling(w).std()
+                frontiere_lags_col[f'{neighbor}_roll_mean_{w}h_from_{target_day_distance}d_ago']  = base.rolling(w).mean()
+                frontiere_lags_col[f'{neighbor}_roll_std_{w}h_from_{target_day_distance}d_ago']   = base.rolling(w).std()
 
-        df_with_lags = pd.concat(
-            [df_with_lags, pd.DataFrame(frontiere_lags_col, index=df_with_lags.index)],
-            axis=1,
-        )
+        df_with_lags = pd.concat([df_with_lags, pd.DataFrame(frontiere_lags_col, index=df_with_lags.index)], axis=1)
+
 
     # ── 6. DROP ORIGINAL PRICE COLUMNS AND EVENTUAL initial NaN rows from lag/rolling lookback ────────────────
-    df_with_lags = df_with_lags.drop(columns=frontiere_list, errors="ignore")
-
+    df_with_lags = df_with_lags.drop(columns=frontiere_list, errors='ignore')
+    
     if drop_initial_nans:
         df_with_lags = df_with_lags.iloc[MAX_LAG_BACK_XGB:]  # ← Fix 6: correct variable
         print(f"  Dropped first {MAX_LAG_BACK_XGB} rows (rolling lookback)")
@@ -309,10 +270,10 @@ def add_features_XGB(
 
 def add_features_RNN(
     df: pd.DataFrame,
-    country_objective: str,
+    iso_objective: str,
     target_day_distance: int,
     add_catch24: bool = False,
-    add_future_time_features: bool = True,
+    add_future_time_features : bool = True,
     add_future_meteo: bool = False,
 ) -> pd.DataFrame:
     """
@@ -347,44 +308,35 @@ def add_features_RNN(
     df = df.copy()
     idx = df.index
     H = target_day_distance * 24
-    iso_objective = VILLE_TO_ISO.get(country_objective, None)
 
     # ── 1. Cyclical time encodings ────────────────────────────────────────
-    df["hour_sin"] = np.sin(2 * np.pi * idx.hour / 24)
-    df["hour_cos"] = np.cos(2 * np.pi * idx.hour / 24)
+    df["hour_sin"]        = np.sin(2 * np.pi * idx.hour / 24)
+    df["hour_cos"]        = np.cos(2 * np.pi * idx.hour / 24)
     df["day_of_week_sin"] = np.sin(2 * np.pi * idx.dayofweek / 7)
     df["day_of_week_cos"] = np.cos(2 * np.pi * idx.dayofweek / 7)
-    df["month_sin"] = np.sin(2 * np.pi * (idx.month - 1) / 12)
-    df["month_cos"] = np.cos(2 * np.pi * (idx.month - 1) / 12)
+    df["month_sin"]       = np.sin(2 * np.pi * (idx.month - 1) / 12)
+    df["month_cos"]       = np.cos(2 * np.pi * (idx.month - 1) / 12)
     df["day_of_year_sin"] = np.sin(2 * np.pi * idx.dayofyear / 365)
     df["day_of_year_cos"] = np.cos(2 * np.pi * idx.dayofyear / 365)
 
     # ── 2. Binary flags ───────────────────────────────────────────────────
-    df["is_weekend"] = (idx.dayofweek >= 5).astype(int)
-    df["is_monday"] = (idx.dayofweek == 0).astype(int)
-    df["is_peak_hour"] = idx.hour.isin(range(8, 20)).astype(int)  # 08:00–20:00
-    df["is_offpeak_hour"] = idx.hour.isin(range(0, 8)).astype(int)  # 00:00–08:00
-    df["is_summer"] = idx.month.isin([6, 7, 8]).astype(int)
-    df["is_winter"] = idx.month.isin([12, 1, 2]).astype(int)
+    df["is_weekend"]      = (idx.dayofweek >= 5).astype(int)
+    df["is_monday"]       = (idx.dayofweek == 0).astype(int)
+    df["is_peak_hour"]    = idx.hour.isin(range(8, 20)).astype(int)   # 08:00–20:00
+    df["is_offpeak_hour"] = idx.hour.isin(range(0, 8)).astype(int)    # 00:00–08:00
+    df["is_summer"]       = idx.month.isin([6, 7, 8]).astype(int)
+    df["is_winter"]       = idx.month.isin([12, 1, 2]).astype(int)
 
     if add_future_time_features:
         # --- Target temporal features (from existing columns) ---
         temporal_cols = [
-            "is_weekend",
-            "is_monday",
-            f"is_holiday_{iso_objective}",
-            "hour_sin",
-            "hour_cos",
-            "day_of_week_sin",
-            "day_of_week_cos",
-            "month_sin",
-            "month_cos",
-            "day_of_year_sin",
-            "day_of_year_cos",
-            "is_peak_hour",
-            "is_offpeak_hour",
-            "is_summer",
-            "is_winter",
+            "is_weekend", "is_monday", f"is_holiday_{iso_objective}",
+            "hour_sin", "hour_cos",
+            "day_of_week_sin", "day_of_week_cos",
+            "month_sin", "month_cos",
+            "day_of_year_sin", "day_of_year_cos",
+            "is_peak_hour", "is_offpeak_hour",
+            "is_summer", "is_winter",
         ]
         for col in temporal_cols:
             df[f"future_{col}"] = df[col].shift(-H)
@@ -392,27 +344,23 @@ def add_features_RNN(
     if add_future_meteo:
         # --- Meteo forecast (proxy: actual meteo at target time) ---
         meteo_cols = [
-            f"{iso_objective}_temperature_c",
-            f"{iso_objective}_precipitation_mm",
-            f"{iso_objective}_vent_km_h",
-            f"{iso_objective}_rafales_km_h",
-            f"{iso_objective}_irradiation_MJ_m2",
+            f"{iso_objective}_future_temperature_c",
+            f"{iso_objective}_future_precipitation_mm",
+            f"{iso_objective}_future_vent_km_h",
+            f"{iso_objective}_future_rafales_km_h",
+            f"{iso_objective}_future_irradiation_MJ_m2",
         ]
         for col in meteo_cols:
             if col not in df.columns:
                 print(f"  ⚠️ Meteo column '{col}' not found, skipping.")
                 continue
-            df[f"{col}_future"] = df[col].shift(-H)
+            df[f"target_{col}"] = df[col].shift(-H)
 
-    # ── 9. Add catch24 features ───────────────────────────────────────────────
+
+
+    # ── 9. Add catch24 features ───────────────────────────────────────────────      
     if add_catch24:
-        df = add_catch24_features(
-            df,
-            window=WINDOW_CATCH22,
-            step=STEP_CATCH22,
-            time_interval="h",
-            country=iso_objective,
-        )
+        df = add_catch24_features(df, window=WINDOW_CATCH22, step=STEP_CATCH22, time_interval="h", country=iso_objective)
         # Drop first `window` days which have no catch24 lookback
         cutoff = df.index.min() + pd.Timedelta(days=WINDOW_CATCH22)
         df = df[df.index >= cutoff]
@@ -420,9 +368,8 @@ def add_features_RNN(
     # ── Final trim: drop last H rows with NaN from negative shift ────────────
     if add_future_time_features or add_future_meteo:
         df = df.iloc[:-H]
-        print(
-            f"  Dropped last {H} rows (future feature negative shift of {target_day_distance} days)"
-        )
+        print(f"  Dropped last {H} rows (future feature negative shift of {target_day_distance} days)")
 
     return df
+
 
