@@ -1,4 +1,5 @@
 from logging import log
+from pathlib import Path
 
 import pandas as pd
 import numpy as np
@@ -9,7 +10,9 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from matplotlib.ticker import MaxNLocator
-from power_forecast.logic.utils.graphs import step_label
+
+def step_label(step: str) -> str:
+    return "journalier" if step == "D" else "horaire"
 
 
 def plot_forecast_sarimax(forecast, X_train, X_test, confidence_int):
@@ -139,3 +142,48 @@ def plot_forecast_xgboost(y_train, y_val, y_test, y_val_pred, y_test_pred):
     plt.plot(y_val_test_day, label="test_pred")
 
 
+import matplotlib.pyplot as plt
+import numpy as np
+
+def plot_predictions_rnn(X_test, y_test_real, y_pred_real, feature_cols, TARGET_COL, n_samples=200):
+    target_idx = feature_cols.index(TARGET_COL)
+    
+    # Extract target column from X_test (last INPUT_LENGTH steps, take the last one)
+    x_target = X_test[:n_samples, -1, target_idx]  # last timestep of input window
+    y_true    = y_test_real[:n_samples, 0]          # first horizon step
+    y_pred    = y_pred_real[:n_samples, 0]
+
+    x_axis = np.arange(n_samples)
+
+    plt.figure(figsize=(14, 5))
+    plt.plot(x_axis, x_target, label="Input (last known)", color="steelblue", linewidth=1.2)
+    plt.plot(x_axis, y_true,   label="Ground truth",       color="seagreen",  linewidth=1.5)
+    plt.plot(x_axis, y_pred,   label="Prediction",         color="tomato",    linewidth=1.5, linestyle="--")
+    plt.title(f"Forecast vs Ground Truth — {TARGET_COL}")
+    plt.xlabel("Sample index")
+    plt.ylabel(TARGET_COL)
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig("forecast_plot.png", dpi=150)  # always save
+    plt.show()
+
+def plot_best_predictions(y_test_real, y_pred_real, TARGET_COL, n_best=5, save_dir="outputs/plots"):
+    os.makedirs(save_dir, exist_ok=True)
+
+    # Pick n_best samples where prediction is closest to ground truth
+    errors = np.abs(y_test_real[:, 0] - y_pred_real[:, 0])
+    best_indices = np.argsort(errors)[:n_best]
+
+    fig, axes = plt.subplots(n_best, 1, figsize=(14, 3 * n_best))
+    fig.suptitle(f"Best Predictions — {TARGET_COL}", fontsize=14)
+
+    for ax, idx in zip(axes, best_indices):
+        ax.plot(y_test_real[idx], label="Ground truth", color="seagreen", linewidth=1.5)
+        ax.plot(y_pred_real[idx], label="Prediction",   color="tomato",   linewidth=1.5, linestyle="--")
+        ax.set_title(f"Sample {idx} — MAE: {errors[idx]:.2f}")
+        ax.legend(fontsize=8)
+
+    plt.tight_layout()
+    path = os.path.join(save_dir, "best_predictions.png")
+    plt.savefig(path, dpi=150)
+    print(f"Plot saved to {path}")

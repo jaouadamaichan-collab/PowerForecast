@@ -1,8 +1,14 @@
 import os
+from pathlib import Path
 
 #Params catch22
 WINDOW_CATCH22 = 7  # in days, for hourly data this means 168 hours
 STEP_CATCH22 = 1  # in days, for hourly data this means
+VALID_STEPS = {"h", "D"}
+
+PICKLE_DIR     = Path("raw_data/pickle_files")
+METEO_CACHE_DIR = PICKLE_DIR / "meteo_cache"   # ← build from PICKLE_DIR, don't hardcode
+METEO_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 # Outliers limits
 LIMIT_LOW = -350
@@ -64,6 +70,37 @@ FRONTIERE = {
     "SVK": ["CZE", "AUT", "HUN", "POL"],
     "SVN": ["ITA", "AUT", "HUN", "HRV"],
     "SWE": ["NOR", "FIN", "DNK", "DEU", "LTU", "POL"],
+}
+
+OBJ_ISO_TO_ENTSOE = {
+    "AUT": "AT",
+    "BEL": "BE",
+    "BGR": "BG",
+    "CHE": "CH",
+    "CZE": "CZ",
+    "DEU": "DE_LU",
+    "DNK": "DK",
+    "ESP": "ES",
+    "EST": None,   # not in COUNTRY_LABELS
+    "FIN": "FI",
+    "FRA": "FR",
+    "GRC": "GR",
+    "HRV": "HR",
+    "HUN": "HU",
+    "IRL": None,   # not in COUNTRY_LABELS
+    "ITA": "IT",
+    "LTU": None,   # not in COUNTRY_LABELS
+    "LUX": "DE_LU",   # merged into DE_LU
+    "LVA": None,   # not in COUNTRY_LABELS
+    "NLD": "NL",
+    "NOR": "NO",
+    "POL": "PL",
+    "PRT": "PT",
+    "ROU": "RO",
+    "SRB": None,   # not in COUNTRY_LABELS
+    "SVK": "SK",
+    "SVN": "SI",
+    "SWE": "SE",
 }
 
 # filter to be safe
@@ -164,12 +201,12 @@ PALETTE = [
 
 # ── Constantes ─────────────────────────────────────────────────────────────────
 DEFAULT_API_KEY = "f26d52ca-874b-49c6-aa45-a3d7d79d43aa"
-DEFAULT_TIMEZONE = "Europe/Paris"
+DEFAULT_TIMEZONE = "UTC"
 DEFAULT_START = "2025-01-01"
 DEFAULT_END = "2025-06-30"
-DEFAULT_STEP = "D"  # "H" ou "D"
-DEFAULT_COUNTRIES = ["FR", "DE_LU", "ES", "BE"]
-DEFAULT_TARGET_COUNTRY = "FR"
+DEFAULT_STEP = "H"  # "H" ou "D"
+# DEFAULT_COUNTRIES = ["FR", "DE_LU", "ES", "BE"]
+# DEFAULT_TARGET_COUNTRY = "FR"
 
 # Catalogue des zones disponibles (code ENTSO-E → label lisible)
 COUNTRY_LABELS = {
@@ -197,10 +234,6 @@ COUNTRY_LABELS = {
     "FI": "Finlande",
     "GB": "Royaume-Uni",
 }
-
-
-# Save parquet
-PICKLE_DIR = "raw_data/pickle_files"
 
 
 COUNTRY_HOLIDAY_MAP = {

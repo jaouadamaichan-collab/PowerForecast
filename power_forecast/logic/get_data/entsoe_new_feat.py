@@ -33,6 +33,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from matplotlib.ticker import MaxNLocator
+from power_forecast.params import *
 
 try:
     from entsoe import EntsoePandasClient
@@ -136,7 +137,7 @@ def get_data(
     ts_end   = parse_date(end,   timezone)
 
     return fetch_all_countries(client, countries, ts_start, ts_end, step=step)
-
+VALID_STEPS
 
 def get_full_data(
     countries: str | list[str],
@@ -220,7 +221,7 @@ def get_full_data(
     log.info("═" * 60)
 
     # Prix day-ahead pour tous les pays
-    df_prices = fetch_all_countries(client, country_list, ts_start, ts_end, step=step)
+    #df_prices = fetch_all_countries(client, country_list, ts_start, ts_end, step=step)
 
     # Données détaillées uniquement pour le pays cible
     df_generation  = fetch_actual_generation(client, target, ts_start, ts_end, step=step)
@@ -235,7 +236,7 @@ def get_full_data(
     )
 
     return {
-        "prices":     df_prices,
+        #"prices":     df_prices,
         "generation": df_generation,
         "load":       df_load,
         "forecast":   df_forecast,

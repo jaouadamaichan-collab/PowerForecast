@@ -24,34 +24,34 @@ from pathlib import Path
 from datetime import datetime
 import random
 
+from power_forecast.logic.utils.graphs import plot_predictions_rnn, plot_best_predictions
+
+
 pd.set_option("display.max_columns", None)
 
-df = build_feature_dataframe("raw_data/all_countries.csv", load_from_pickle=True)
 
-
+#Inputs
 # ── DEFINE INPUT/OUTPUT PARAMETERS ──────────────────────────
 
 TARGET_COL = "FRA"
-feature_cols = [c for c in df.columns]
 
-INPUT_LENGTH = 14 * 24  # 168h context fed to RNN
-OUTPUT_LENGTH = 48  # predict 24h of target day
-HORIZON = 0  # skip 24h between input end and output
-TRAIN_TEST_RATIO = 0.98  # 98% of sequences → train, 2% → test
-VAL_RATIO = 0.1  # 10% of train sequences → validation
+INPUT_LENGTH = 21 * 24  # 168h context fed to RNN
+OUTPUT_LENGTH = 24  # predict 24h of target day
+HORIZON = 24  # skip 24h between input end and output
+TRAIN_TEST_RATIO = 0.9  # 90% of sequences → train, 10% → test
+VAL_RATIO = 0.15  # 15% of train sequences → validation
 STRIDE_TRAIN = 48  # advance 2 day between train sequences
 STRIDE_TEST = 48  # advance 2 day between test sequences (deterministic)
 
 
-# sample 70% of possible sequences (for faster training; set to 1.0 to use all)
-PATIENCE = 10
-BATCH_SIZE = 64
+PATIENCE = 15
+BATCH_SIZE = 32
 EPOCHS = 100
-MODEL_NAME = "lstm"
+MODEL_NAME = "lstm_2"
 
 fit_scaler = True  # set to False to skip scaling (useful for debugging)
-resample_sequences = False
-train_new_model = False  # set to True to skip training and load existing model
+resample_sequences = True
+train_new_model = True  # set to False to load existing model and skip training (must have been trained at least once with train_new_model=True to have the files)
 
 
 model_name = f"{MODEL_NAME}_{TARGET_COL}_in{INPUT_LENGTH}_out{OUTPUT_LENGTH}_h{HORIZON}"
@@ -63,54 +63,6 @@ SAVE_SEQUENCES = Path("raw_data/sequences")
 SAVE_SEQUENCES.mkdir(parents=True, exist_ok=True)
 MODEL_PATH = Path(f"raw_data/models/{model_name}.keras")
 MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
-
-
-##-------------------- Train - Test split based on input day --------------------
-
-print("Data start:", df.index.min())
-print("Data end:  ", df.index.max())
-print("Total rows:", len(df))
-
-cutoff = pd.Timestamp("2023-10-01", tz="UTC")
-
-fold_train = df[df.index < cutoff].copy()
-fold_test = df[df.index >= cutoff - pd.Timedelta(hours=INPUT_LENGTH)].copy()
-
-print(
-    f"\nfold_train: {len(fold_train)} rows  {fold_train.index[0]} → {fold_train.index[-1]}"
-)
-print(
-    f"fold_test:  {len(fold_test)} rows   {fold_test.index[0]} → {fold_test.index[-1]}"
-)
-print(f"First y_test label: {fold_test.index[INPUT_LENGTH + HORIZON]}")
-
-
-# Scale before sampling sequences, also the target column
-# It will be scaled back to real values at the end for evaluation and plotting.
-scaler = StandardScaler()
-fold_train[feature_cols] = scaler.fit_transform(fold_train[feature_cols])
-fold_test[feature_cols] = scaler.transform(fold_test[feature_cols])
-
-
-## ------------------- CREATE SEQUENCES (X, y) FOR RNN -------------------
-
-## STEP 3 — SAMPLE SEQUENCES FROM fold_train → 3D arrays
-## ✅ Sequences are sampled AFTER scaling (you never want to build
-##    sequences from raw data and scale them after — the scaler
-##    would not have the right statistics per-sequence).
-## ✅ mode='random' for train: model sees diverse starting points.
-## Output: X_train (n, 2 weeks data, n_features) | y_train (n, 24)
-
-# Load if they exisits alreaday, otherwise create them and save for future use.
-if resample_sequences == False:
-    X_train = np.load(SAVE_SEQUENCES / "X_train.npy")
-    y_train = np.load(SAVE_SEQUENCES / "y_train.npy")
-    print(f"Loaded — X_train: {X_train.shape}")
-    print(f"Loaded — y_train: {y_train.shape}")
-
-
-# Method to transform our X_train in 3-dimensional array of sequences, and y_train in 2D array of corresponding labels.
-
 
 # ── Core: single sequence ──────────────────────────────────────────────────
 def get_Xi_yi(
@@ -185,74 +137,6 @@ def get_X_y(
     return X, y
 
 
-if resample_sequences:
-    X_train, y_train = get_X_y(
-        fold_train,
-        feature_cols,
-        TARGET_COL,
-        STRIDE_TRAIN,
-        INPUT_LENGTH,
-        HORIZON,
-        OUTPUT_LENGTH,
-    )
-    np.save(SAVE_SEQUENCES / "X_train.npy", X_train)
-    np.save(SAVE_SEQUENCES / "y_train.npy", y_train)
-    print(f"Sampled and saved — X_train: {X_train.shape}")
-    print(f"Sampled and saved — y_train: {y_train.shape}")
-
-
-# -------------- Validation split from train sequences --------------
-
-print(f"Loaded — X_train: {X_train.shape}")
-print(f"Loaded — y_train: {y_train.shape}")
-
-val_split = int(len(X_train) * (1 - VAL_RATIO))
-
-X_tr = X_train[:val_split]
-y_tr = y_train[:val_split]
-X_val = X_train[val_split:]
-y_val = y_train[val_split:]
-
-print(f"\nX_tr:  {X_tr.shape}   y_tr:  {y_tr.shape}")
-print(f"X_val: {X_val.shape}  y_val: {y_val.shape}")
-
-
-# ─────────────────────────────────────────────────────────────────
-## LSTM MODEL
-# ─────────────────────────────────────────────────────────────────
-
-
-def initialize_model_lstm(input_shape, output_length):
-    model = Sequential(
-        [
-            Input(shape=input_shape),
-            LSTM(
-                128, activation="tanh", return_sequences=True, recurrent_dropout=0.1
-            ),  # dropout on recurrent connections
-            Dropout(0.2),
-            LSTM(64, activation="tanh", return_sequences=True, recurrent_dropout=0.1),
-            LSTM(32, activation="tanh", return_sequences=False),
-            Dropout(0.2),
-            Dense(64, activation="relu"),
-            BatchNormalization(),
-            Dense(32, activation="relu"),
-            Dense(output_length, activation="linear"),
-        ]
-    )
-    optimizer = Adam(learning_rate=1e-3, clipnorm=1.0)
-    model.compile(
-        optimizer=optimizer,
-        loss=Huber(delta=1.0),  # behaves like MAE for large errors, MSE for small ones
-        metrics=["mae", "mse"],
-    )
-    model.summary()
-    return model
-
-
-early_stopping = EarlyStopping(
-    monitor="val_loss", patience=PATIENCE, restore_best_weights=True
-)
-
 
 def train_or_load_model_lstm(
     train_new_model,
@@ -289,7 +173,86 @@ def train_or_load_model_lstm(
     model.summary()
     return model, history
 
+
+df = build_feature_dataframe("raw_data/all_countries.csv", load_from_pickle=True)
+feature_cols = [c for c in df.columns]
+
+cutoff = pd.Timestamp("2023-10-01", tz="UTC")
+fold_train = df[df.index < cutoff].copy()
+fold_test = df[df.index >= cutoff - pd.Timedelta(hours=INPUT_LENGTH)].copy()
+
+print(
+    f"\nfold_train: {len(fold_train)} rows  {fold_train.index[0]} → {fold_train.index[-1]}"
+)
+print(
+    f"fold_test:  {len(fold_test)} rows   {fold_test.index[0]} → {fold_test.index[-1]}"
+)
+
+# Scale before sampling sequences, also the target column
+# It will be scaled back to real values at the end for evaluation and plotting.
+scaler = StandardScaler()
+fold_train[feature_cols] = scaler.fit_transform(fold_train[feature_cols])
+fold_test[feature_cols] = scaler.transform(fold_test[feature_cols])
+
+    
+if resample_sequences:
+    X_train, y_train = get_X_y(
+        fold_train,
+        feature_cols,
+        TARGET_COL,
+        STRIDE_TRAIN,
+        INPUT_LENGTH,
+        HORIZON,
+        OUTPUT_LENGTH,
+    )
+    np.save(SAVE_SEQUENCES / "X_train.npy", X_train)
+    np.save(SAVE_SEQUENCES / "y_train.npy", y_train)
+    print(f"Sampled and saved — X_train: {X_train.shape}")
+    print(f"Sampled and saved — y_train: {y_train.shape}")
+
+
+
+val_split = int(len(X_train) * (1 - VAL_RATIO))
+
+X_tr = X_train[:val_split]
+y_tr = y_train[:val_split]
+X_val = X_train[val_split:]
+y_val = y_train[val_split:]
+
+print(f"\nX_tr:  {X_tr.shape}   y_tr:  {y_tr.shape}")
+print(f"X_val: {X_val.shape}  y_val: {y_val.shape}")
+
+# Define new model structure
+
+def initialize_model_lstm(input_shape, output_length):
+    model = Sequential(
+        [
+            Input(shape=input_shape),
+            LSTM(
+                128, activation="tanh", return_sequences=True, recurrent_dropout=0.1
+            ),  # dropout on recurrent connections
+            Dropout(0.2),
+            LSTM(64, activation="tanh", return_sequences=True, recurrent_dropout=0.1),
+            LSTM(32, activation="tanh", return_sequences=False),
+            Dropout(0.2),
+            Dense(64, activation="relu"),
+            BatchNormalization(),
+            Dense(32, activation="relu"),
+            Dense(output_length, activation="linear"),
+        ]
+    )
+    optimizer = Adam(learning_rate=1e-3, clipnorm=1.0)
+    model.compile(
+        optimizer=optimizer,
+        loss=Huber(delta=1.0),  # behaves like MAE for large errors, MSE for small ones
+        metrics=["mae", "mse"],
+    )
+    model.summary()
+    return model
+
 model_lstm = initialize_model_lstm(input_shape=(INPUT_LENGTH, len(feature_cols)), output_length=OUTPUT_LENGTH)
+
+
 
 model_lstm, history_lstm = train_or_load_model_lstm(
     train_new_model,
@@ -303,7 +266,6 @@ model_lstm, history_lstm = train_or_load_model_lstm(
     MODEL_PATH,
     PATIENCE,
 )
-
 
 # ---- Create X_test and y_test from fold_test (chronological scan) ----
 X_test, y_test = get_X_y(
@@ -319,9 +281,9 @@ X_test, y_test = get_X_y(
 # Evaluate model on test set
 loss, mae, mse = model_lstm.evaluate(X_test, y_test, verbose=1)
 
-print("Test Loss:", loss)
-print("Test MAE:", mae)
-print("Test MSE:", mse)
+print("Test Loss Normalized:", loss)
+print("Test MAE Normalized:", mae)
+print("Test MSE Normalized:", mse)
 
 target_idx = feature_cols.index(TARGET_COL)
 
@@ -345,6 +307,10 @@ total_span = INPUT_LENGTH + HORIZON + OUTPUT_LENGTH
 max_start = len(fold_test) - total_span
 starts = list(range(0, max_start + 1, STRIDE_TEST))
 
+plot_best_predictions(y_test_real, y_pred_real, TARGET_COL)
+#scp user@your-vm-ip:/path/to/PowerForecast/outputs/plots/best_predictions.png ~/Desktop/
+
+
 # print sequence by sequence, hour by hour
 for seq_idx in range(len(y_test_real) - 3, len(y_test_real)):
     start_idx = starts[seq_idx]
@@ -358,5 +324,5 @@ for seq_idx in range(len(y_test_real) - 3, len(y_test_real)):
         print(
             f"  {timestamp} | Real: {real:>8.2f} EUR/MWh | Predicted: {predicted:>8.2f} EUR/MWh"
         )
-
-
+        
+        

@@ -14,6 +14,7 @@ from power_forecast.logic.get_data.time_features import (
 from power_forecast.logic.utils.others import load_df, save_df
 from power_forecast.logic.get_data.meteo import get_meteo
 from power_forecast.params import *
+from power_forecast.logic.get_data.kaggle_df import create_df_from_local_csv
 
 
 
@@ -119,7 +120,7 @@ def build_feature_dataframe(
         raise ValueError(f"Country '{country_objective}' not found in VILLE_TO_ISO mapping. Please check the country name or update the mapping.")
 
     print("\n── Step 1: Load raw data ────────────────────────────────────────")
-    df = create_dataframe_base(filepath)
+    df = create_df_from_local_csv(filepath)
     #print(df.columns.to_list())
 
 
@@ -138,12 +139,12 @@ def build_feature_dataframe(
     print("\n── Step 3: Replace outliers ─────────────────────────────────────")
     df = replace_outliers_with_interpolation(df, limit_low=limit_low, limit_high=limit_high)
 
-
+    print(iso_objective)
     # ── Step 4: Temporal features ─────────────────────────────────────────────
     print("\n── Step 4: Temporal features ────────────────────────────────────")
     df = add_temporal_features(df)
-    df = add_public_holidays(df, country=iso_objective)
-    df = add_crisis_column(df, tz='UTC')
+    #df = add_public_holidays(df, country=iso_objective)
+    #df = add_crisis_column(df, tz='UTC')
 
     # ── Step 5: Meteo features ─────────────────────────────────────────────
     print("\n── Step 5: Meteo features ───────────────────────────────────────")
