@@ -29,19 +29,24 @@ pd.set_option('display.max_columns', None)
 
 # Chargement du DataFrame de features à partir d'un CSV multi-pays.
 # `load_from_pickle=False` force un rechargement complet plutôt que d'utiliser un cache.
-df = build_feature_dataframe(
-    filepath='raw_data/all_countries.csv',
-    load_from_pickle=False,
-    country_objective='France',
+
+df_common = build_common_dataframe(
+    filepath="raw_data/all_countries.csv",
+    country_objective="France",
     target_day_distance=2,
-    time_interval='h',
-    save_name='df_with_features',
-    drop_nan=True,
+    time_interval="h",
     keep_only_neighbors=True,
-    add_lag_frontiere=True,
+    add_meteo=True,
     add_crisis=True,
-    add_gen_load_forecast=True,
-    add_catch24=True,
+    add_entsoe=True,
+)
+
+df_rnn = add_features_RNN(
+    df=df_common,
+    country_objective="France",
+    target_day_distance=2,
+    add_future_time_features=True,
+    add_future_meteo=True,
 )
 
 from typing import Dict, List, Tuple, Sequence
