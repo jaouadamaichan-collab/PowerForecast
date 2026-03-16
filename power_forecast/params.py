@@ -14,6 +14,7 @@ METEO_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 LIMIT_LOW = -350
 LIMIT_HIGH = 900
 
+MAX_LAG_BACK = 336  # in hours, corresponds to 2 semaines (même heure)
 LAGS_TARGET = [
     1,
     2,
@@ -32,6 +33,9 @@ LAGS_FRONTIERE = [
     72,  # 2-3 jours
     168,
 ]
+
+DROP_COLUMN_NAN_TRESHOLD = 0.05  # Drop columns with more than 5% NaN
+
 
 ROLLING_WINDOWS_TARGET = [6, 12, 24, 48, 62, 120]  # en heures
 
