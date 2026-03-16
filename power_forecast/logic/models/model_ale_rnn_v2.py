@@ -266,7 +266,7 @@ def initialize_model_lstm(input_shape, output_length):
     model.summary()
     return model
 
-model_lstm = initialize_model_lstm(input_shape=(INPUT_LENGTH, len(feature_cols)), output_length=OUTPUT_LENGTH)
+model_lstm = initialize_model_lstm(input_shape=X_tr.shape[1:], output_length=y_tr.shape[1])
 
 
 
