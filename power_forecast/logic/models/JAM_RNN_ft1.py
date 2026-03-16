@@ -137,7 +137,8 @@ folds = get_folds(df, FOLD_LENGTH, FOLD_STRIDE)
 print(f'The function generated {len(folds)} folds.')
 print(f'Each fold has a shape equal to {folds[0].shape}.')
 
-
+fold=folds[0]
+fold
 
 
 
