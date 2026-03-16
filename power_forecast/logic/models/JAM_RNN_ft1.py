@@ -34,7 +34,7 @@ df = build_feature_dataframe(
     add_lag_frontiere=True, #Add lag features of neighboring countries (based on FRONTIERE dict)
     add_crisis=True, #Add crisis features (based on CRISIS_PERIODS dict)
     add_gen_load_forecast=True, #Add generation and load forecast features (based on GEN_LOAD_FORECAST dict)
-    add_catch24=True, #Add catch24 features (based on WINDOW_CATCH22 and STEP_CATCH22 parameters
+    add_catch24=False, #Add catch24 features (based on WINDOW_CATCH22 and STEP_CATCH22 parameters
 )
 
 from typing import Dict, List, Tuple, Sequence
