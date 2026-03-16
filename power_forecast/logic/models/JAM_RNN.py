@@ -37,10 +37,6 @@ from keras.callbacks import EarlyStopping
 
 df.shape
 
-# Suppression des colonnes calendaires : le modèle apprendra les patterns temporels
-# directement depuis les séquences brutes de la série temporelle.
-df = df.drop(columns=["hour", "day_of_week", "month", "quarter", "year", "day_of_year"])
-
 # --------------------------------------------------- #
 # Configuration globale du jeu de données             #
 # --------------------------------------------------- #
