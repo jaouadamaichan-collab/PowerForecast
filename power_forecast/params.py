@@ -43,6 +43,10 @@ ROLLING_WINDOWS_XGB_FRONTIERE = [
     48,
 ]
 
+
+
+
+
 DROP_COLUMN_NAN_TRESHOLD = 0.05  # Drop columns with more than 5% NaN
 
 
@@ -177,7 +181,7 @@ CRISIS_PERIODS = [
 # Params catch22
 WINDOW_CATCH22 = 7  # in days, for hourly data this means 168 hours
 STEP_CATCH22 = 1  # in days, for hourly data this means
-
+TIMESTAMP_CATCH22 = 'h'
 
 # Variables Météo
 
