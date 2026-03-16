@@ -216,7 +216,7 @@ def add_catch24_features(df, window=WINDOW_CATCH22, step=STEP_CATCH22, time_inte
 
     # ── Time interval multiplier ──────────────────────────────────────────────
     interval_map = {
-        "H": 24,
+        "h": 24,
         "D": 1,
     }
     assert time_interval in interval_map, f"time_interval must be one of {list(interval_map.keys())}"
@@ -275,16 +275,16 @@ def add_catch24_features(df, window=WINDOW_CATCH22, step=STEP_CATCH22, time_inte
 
 
 
-# def align_start_to_column(df, column, apply=True):
-#     """
-#     Make dataset start from the first valid (non-NaN) value of a specific column.
-#     If Croatia: 2017-10-01 00:00:00
-#     """
-#     if apply:
-#         first_valid = df[column].first_valid_index()
-#         df_aligned = df[df.index >= first_valid]
-#         return df_aligned
-#     return df
+def align_start_to_column(df, column, apply=True):
+    """
+    Make dataset start from the first valid (non-NaN) value of a specific column.
+    If Croatia: 2017-10-01 00:00:00
+    """
+    if apply:
+        first_valid = df[column].first_valid_index()
+        df_aligned = df[df.index >= first_valid]
+        return df_aligned
+    return df
 
 
 

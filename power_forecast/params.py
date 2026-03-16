@@ -1,11 +1,14 @@
 import os
 from pathlib import Path
 
-METEO_CACHE_DIR = Path("raw_data/meteo_cache")
-METEO_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 #Params catch22
 WINDOW_CATCH22 = 7  # in days, for hourly data this means 168 hours
 STEP_CATCH22 = 1  # in days, for hourly data this means
+VALID_STEPS = {"h", "D"}
+
+PICKLE_DIR     = Path("raw_data/pickle_files")
+METEO_CACHE_DIR = PICKLE_DIR / "meteo_cache"   # ← build from PICKLE_DIR, don't hardcode
+METEO_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 # Outliers limits
 LIMIT_LOW = -350
@@ -232,10 +235,6 @@ COUNTRY_LABELS = {
     "GB": "Royaume-Uni",
 }
 
-
-# Save parquet
-PICKLE_DIR = "raw_data/pickle_files"
-VALID_STEPS = {"H", "D"}
 
 COUNTRY_HOLIDAY_MAP = {
     "AUT": "AT",

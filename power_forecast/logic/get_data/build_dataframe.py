@@ -22,7 +22,7 @@ def build_feature_dataframe(
     load_from_pickle: bool = False,
     country_objective: str  = 'France',
     target_day_distance: int = 2,
-    time_interval: str  = 'H',# 'H' for hourly, 'D' for daily
+    time_interval: str  = 'h',# 'h' for hourly, 'D' for daily
     save_name:     str  = 'df_with_features',
     drop_nan: bool = True,
     keep_only_neighbors: bool = True,
@@ -68,17 +68,18 @@ def build_feature_dataframe(
         df_entsoe  = get_gen_load_forecast(iso_entsoe, date_start, date_end, step=time_interval)
         print(f"Generation, Load and Forecast for {country_objective} downloaded")
     
-    meteo_cache_path = METEO_CACHE_DIR / f"meteo_{country_objective}_{date_start}_{date_end}_{time_interval}.pkl"
-    
+    meteo_cache_path = Path("raw_data/pickle_files/meteo_cache") / f"meteo_{country_objective}_{date_start}_{date_end}_{time_interval}.pkl"
+
     if meteo_cache_path.exists():
         print(f"  ✓ Meteo cache found, loading from {meteo_cache_path}")
-        df_meteo = load_df(meteo_cache_path)
+        df_meteo = pd.read_pickle(meteo_cache_path)
     else:
         print(f"  ✗ Meteo cache not found, fetching...")
         df_meteo = get_meteo(country_objective, date_start, date_end, time_interval)
-        save_df(df_meteo, meteo_cache_path)
+        meteo_cache_path.parent.mkdir(parents=True, exist_ok=True)
+        df_meteo.to_pickle(meteo_cache_path)  # save directly, bypass save_df entirely
         print(f"  ✓ Meteo saved to {meteo_cache_path}")
-        
+    
     # ── 6. Add crisis and holiday features ───────────────────────────────────────────────
     if add_crisis:
         df_crisis = add_crisis_column(date_start, date_end, timezone="UTC")
