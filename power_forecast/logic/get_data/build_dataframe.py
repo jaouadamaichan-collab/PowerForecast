@@ -127,6 +127,12 @@ def build_feature_dataframe(
         'day_of_year'
     ])
     
+    # Drop duplicate columns (keep first occurrence)
+    df = df.loc[:, ~df.columns.duplicated(keep='first')]
+
+    # Drop duplicate rows (keep first occurrence)
+    df = df[~df.index.duplicated(keep='first')]
+    
     # ── 10. Drop rows with NaN values and interpolate ───────────────────────────────────────────────
     df_clean = clean_dataframe(
         df=df,
