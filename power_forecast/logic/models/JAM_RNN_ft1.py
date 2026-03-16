@@ -48,6 +48,34 @@ from keras.callbacks import EarlyStopping
 from keras.layers import Lambda
 from keras.callbacks import EarlyStopping
 
+# ================================================================= #
+# 2. FEATURE SELECTION PAR LASSO                                    #
+# ================================================================= #
+
+def lasso_feature_selection(df: pd.DataFrame, target: str,
+                             alpha: float = 0.01) -> List[str]:
+    features = [c for c in df.columns if c != target]
+    X = df[features].values
+    y = df[target].values
+
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
+
+    lasso = Lasso(alpha=alpha, max_iter=10000)
+    lasso.fit(X_scaled, y)
+
+    selected = [features[i] for i, coef in enumerate(lasso.coef_) if coef != 0]
+    print(f"\nLasso feature selection (alpha={alpha}) :")
+    print(f"  {len(features)} features initiales → {len(selected)} features sélectionnées")
+    print(f"  Features conservées : {selected}")
+    return selected
+
+
+selected_features = lasso_feature_selection(df, target='FRA', alpha=0.01)
+
+df_selected = df[selected_features + ['FRA']]
+print(f"\nShape après feature selection : {df_selected.shape}")
+
 # --------------------------------------------------- #
 # Configuration globale du jeu de données             #
 # --------------------------------------------------- #
@@ -409,10 +437,10 @@ def fit_model(model: tf.keras.Model, verbose: int = 1) -> Tuple[tf.keras.Model, 
 
     history = model.fit(
         X_train, y_train,
-        validation_split=0.3,
+        validation_split=0.1,
         shuffle=False,           # Critique : ne pas mélanger les données de série temporelle
-        batch_size=32,
-        epochs=50,
+        batch_size=16,
+        epochs=100,
         callbacks=[es],
         verbose=verbose
     )
@@ -534,10 +562,10 @@ def cross_validate_baseline_and_lstm():
         )
         history = model.fit(
             X_train, y_train,
-            validation_split=0.3,
+            validation_split=0.1,
             shuffle=False,
-            batch_size=32,
-            epochs=50,
+            batch_size=16,
+            epochs=100,
             callbacks=[es],
             verbose=0
         )
