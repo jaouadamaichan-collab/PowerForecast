@@ -4,7 +4,7 @@ from pathlib import Path
 import joblib
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 from sklearn.preprocessing import StandardScaler
-from power_forecast.logic.get_data.download_api import build_feature_dataframe
+from power_forecast.logic.get_data.build_dataframe import build_feature_dataframe
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.layers import LSTM, Dense, Dropout
 from tensorflow.keras.callbacks import EarlyStopping
@@ -35,16 +35,16 @@ pd.set_option("display.max_columns", None)
 
 TARGET_COL = "FRA"
 
-INPUT_LENGTH = 21 * 24  # 168h context fed to RNN
-OUTPUT_LENGTH = 24  # predict 24h of target day
-HORIZON = 24  # skip 24h between input end and output
-TRAIN_TEST_RATIO = 0.9  # 90% of sequences → train, 10% → test
-VAL_RATIO = 0.15  # 15% of train sequences → validation
+INPUT_LENGTH = 21 * 24  # 3 weeks context fed to RNN
+OUTPUT_LENGTH = 48  # predict 48h of target day
+HORIZON = 0  # skip 24h between input end and output
+# TRAIN_TEST_RATIO = 0.9  # 90% of sequences → train, 10% → test
+VAL_RATIO = 0.10  # 10% of train sequences → validation
 STRIDE_TRAIN = 48  # advance 2 day between train sequences
 STRIDE_TEST = 48  # advance 2 day between test sequences (deterministic)
 
 
-PATIENCE = 15
+PATIENCE = 10
 BATCH_SIZE = 32
 EPOCHS = 100
 MODEL_NAME = "lstm_2"
@@ -174,7 +174,23 @@ def train_or_load_model_lstm(
     return model, history
 
 
-df = build_feature_dataframe("raw_data/all_countries.csv", load_from_pickle=True)
+df = build_feature_dataframe(
+    filepath='raw_data/all_countries.csv',
+    load_from_pickle = False, #True if you want to load from a previously saved pickle file, False to build the dataframe from scratch (which takes more time)
+    country_objective='France', 
+    target_day_distance=2,
+    time_interval='h', #Time interval for resampling the data (e.g., 'h' for hourly, 'D' for daily)
+    save_name='df_with_features',
+    drop_nan=True, #Drop rows with NaN values (due to target distance and catch24 features)
+    keep_only_neighbors=True, #Keep only neighboring countries for the lag frontiere features (instead of all countries)
+    add_lag_frontiere=True, #Add lag features of neighboring countries (based on FRONTIERE dict)
+    add_crisis=True, #Add crisis features (based on CRISIS_PERIODS dict)
+    add_gen_load_forecast=True, #Add generation and load forecast features (based on GEN_LOAD_FORECAST dict)
+    add_catch24=True, #Add catch24 features (based on WINDOW_CATCH22 and STEP_CATCH22 parameters
+)
+
+print(f"\nFinal dataframe shape: {df.shape}")
+
 feature_cols = [c for c in df.columns]
 
 cutoff = pd.Timestamp("2023-10-01", tz="UTC")
@@ -250,7 +266,7 @@ def initialize_model_lstm(input_shape, output_length):
     model.summary()
     return model
 
-model_lstm = initialize_model_lstm(input_shape=(INPUT_LENGTH, len(feature_cols)), output_length=OUTPUT_LENGTH)
+model_lstm = initialize_model_lstm(input_shape=X_tr.shape[1:], output_length=y_tr.shape[1])
 
 
 

@@ -4,7 +4,7 @@ from pathlib import Path
 import joblib
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 from sklearn.preprocessing import StandardScaler
-from power_forecast.logic.get_data.download_api import build_feature_dataframe
+from power_forecast.logic.get_data.build_dataframe import build_feature_dataframe
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.layers import LSTM, Dense, Dropout
 from tensorflow.keras.callbacks import EarlyStopping
@@ -26,8 +26,20 @@ import random
 
 pd.set_option("display.max_columns", None)
 
-df = build_feature_dataframe("raw_data/all_countries.csv", load_from_pickle=True)
-
+df = build_feature_dataframe(
+    filepath='raw_data/all_countries.csv',
+    load_from_pickle = False, #True if you want to load from a previously saved pickle file, False to build the dataframe from scratch (which takes more time)
+    country_objective='France', 
+    target_day_distance=2,
+    time_interval='h', #Time interval for resampling the data (e.g., 'h' for hourly, 'D' for daily)
+    save_name='df_with_features',
+    drop_nan=True, #Drop rows with NaN values (due to target distance and catch24 features)
+    keep_only_neighbors=False, #Keep only neighboring countries for the lag frontiere features (instead of all countries)
+    add_lag_frontiere=True, #Add lag features of neighboring countries (based on FRONTIERE dict)
+    add_crisis=True, #Add crisis features (based on CRISIS_PERIODS dict)
+    add_gen_load_forecast=False, #Add generation and load forecast features (based on GEN_LOAD_FORECAST dict)
+    add_catch24=True, #Add catch24 features (based on WINDOW_CATCH22 and STEP_CATCH22 parameters
+)
 
 # ── DEFINE INPUT/OUTPUT PARAMETERS ──────────────────────────
 

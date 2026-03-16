@@ -126,15 +126,83 @@ def build_feature_dataframe(
         'year',
         'day_of_year'
     ])
-    # ── 10. Drop rows with NaN values (due to target distance and catch24 features) ───────────────────────────────────────────────
-    if drop_nan:
-        df_clean = df.dropna()
-        print(f"Rows dropped: {len(df) - len(df_clean)} to avoid nan due to target distance and catch22 features")
     
+    # Drop duplicate columns (keep first occurrence)
+    df = df.loc[:, ~df.columns.duplicated(keep='first')]
+
+    # Drop duplicate rows (keep first occurrence)
+    df = df[~df.index.duplicated(keep='first')]
+    
+    # ── 10. Drop rows with NaN values and interpolate ───────────────────────────────────────────────
+    df_clean = clean_dataframe(
+        df=df,
+        max_rolling_back=MAX_LAG_BACK,
+        target_day_distance=target_day_distance,
+        nan_threshold=DROP_COLUMN_NAN_TRESHOLD,
+    )
+
     # ── Save ──────────────────────────────────────────────────────────────────
     print("\n── Saving to pickle ─────────────────────────────────────────────")
     save_df(df_clean, save_name)
     
+    return df_clean
+
+
+
+def clean_dataframe(
+    df: pd.DataFrame,
+    max_rolling_back: int,
+    target_day_distance: int,
+    nan_threshold: float = 0.05,
+) -> pd.DataFrame:
+    """
+    Clean the feature dataframe by:
+        1. Dropping columns with more than `nan_threshold` % of NaN values
+           (typically API columns with sparse data).
+        2. Dropping the first `max_rolling_back` rows with NaN due to rolling lookback.
+        3. Dropping the last `H` rows with NaN due to future shift on target columns.
+        4. Interpolating all remaining NaN values.
+
+    Parameters
+    ----------
+    df              : pd.DataFrame with DatetimeIndex
+    max_rolling_back: int, number of rows to drop at the start (rolling window size)
+    H               : int, number of rows to drop at the end (target_day_distance * 24)
+    nan_threshold   : float, max allowed NaN ratio per column (default 0.05 = 5%)
+
+    Returns
+    -------
+    df : pd.DataFrame, cleaned with zero NaN values
+
+    ⚠️  Call this function BEFORE train/test split to avoid
+    data leakage from interpolation across the split boundary.
+    """
+    initial_shape = df.shape
+    H = target_day_distance * 24
+
+    # ── 1. Drop columns with more than nan_threshold NaN ─────────────────
+    nan_ratio = df.isna().mean()
+    cols_to_drop = nan_ratio[nan_ratio > nan_threshold].index.tolist()
+    df = df.drop(columns=cols_to_drop)
+    print(f"  1. Dropped {len(cols_to_drop)} columns with >{nan_threshold*100:.0f}% NaN: {cols_to_drop}")
+
+    # ── 2. Drop first rows (NaN due to rolling lookback) ─────────────────
+    df = df.iloc[max_rolling_back:]
+    print(f"  2. Dropped first {max_rolling_back} rows (rolling lookback)")
+
+    # ── 3. Drop last rows (NaN due to future shift on target columns) ─────
+    df = df.iloc[:-H]
+    print(f"  3. Dropped last {H} rows (future shift H={H})")
+
+    # ── 4. Interpolate remaining NaN ──────────────────────────────────────
+    nan_before = df.isna().sum().sum()
+    df = df.interpolate(method='time')
+    df = df.fillna(method='bfill')
+    nan_after = df.isna().sum().sum()
+    print(f"  4. Interpolated NaN: {nan_before} → {nan_after} remaining")
+
+    # ── Sanity check ──────────────────────────────────────────────────────
+    assert df.isna().sum().sum() == 0, "⚠️ Still NaN values remaining after cleaning!"
+    print(f"  ✓ Done — shape: {initial_shape} → {df.shape}, zero NaN values")
+
     return df
-
-
