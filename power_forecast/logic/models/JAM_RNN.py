@@ -22,7 +22,7 @@ pd.set_option('display.max_columns', None)
 
 # Chargement du DataFrame de features à partir d'un CSV multi-pays.
 # `load_from_pickle=False` force un rechargement complet plutôt que d'utiliser un cache.
-df = build_feature_dataframe('raw_data/all_countries.csv', load_from_pickle=False)
+df = build_feature_dataframe('raw_data/all_countries.csv', add_gen_load_forecast=False, keep_only_neighbors=False)
 
 from typing import Dict, List, Tuple, Sequence
 import numpy as np

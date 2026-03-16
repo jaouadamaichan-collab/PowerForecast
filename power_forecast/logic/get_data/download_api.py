@@ -28,11 +28,21 @@ def create_dataframe_base(filepath: str) -> pd.DataFrame:
     """
     # Load raw CSV
 
-    df = pd.read_csv(filepath)
-    # Parse UTC datetime & set as index
+    df = pd.read_csv(filepath, index_col=0)
+    df = df.reset_index()
+
+    # DEBUG
+    print("Colonnes :", df.columns.tolist())
+    print("Premières lignes :\n", df.head(2))
+    print("index_col=0 name :", df.columns[0])
+
+    # Si "Datetime (UTC)" est l'index (cas du fichier mergé)
+    if "Datetime (UTC)" not in df.columns:
+        df = df.reset_index()
+        df = df.rename(columns={"index": "Datetime (UTC)"})
+
     df["Datetime (UTC)"] = pd.to_datetime(df["Datetime (UTC)"], utc=True)
 
-    # Pivot: rows = datetime, columns = country, values = price
     df_pivot = df.pivot_table(
         index="Datetime (UTC)",
         columns="ISO3 Code",
@@ -42,13 +52,10 @@ def create_dataframe_base(filepath: str) -> pd.DataFrame:
         dropna=False,
     )
 
-    # Clean column name metadata
     df_pivot.columns.name = None
     df_pivot.index.name = "datetime_utc"
-
-    # Sort index
     df_pivot = df_pivot.sort_index()
-    df_pivot = df_pivot.drop("MKD", axis=1)
+    df_pivot = df_pivot.drop("MKD", axis=1, errors="ignore")
 
     return df_pivot
 
@@ -67,6 +74,7 @@ def build_feature_dataframe(
     drop_nan: bool = True,
     keep_only_neighbors: bool = True,
     add_lag_frontiere: bool = True,
+    add_catch24: bool = True,        # ← AJOUT ICI
     load_from_pickle: bool = False,
 ) -> pd.DataFrame:
     """
@@ -119,12 +127,12 @@ def build_feature_dataframe(
         print("\n── Step 2: Keeping only neighboring countries ─────────────────────────────")
         df = filter_neighbor_columns(df, iso=iso_objective)
 
-    
+
     country_list = df.columns.tolist()
     # If croatia considered i cut df
     if align_column in df.columns:
         df = align_start_to_column(df, column=align_column, apply=True)
-        
+
 
     # ── Step 3: Remove outliers ───────────────────────────────────────────────
     print("\n── Step 3: Replace outliers ─────────────────────────────────────")
@@ -150,7 +158,7 @@ def build_feature_dataframe(
     # ── Step 7: Add lag and context features ───────────────────────────────────────
     print("\n── Step 7: Add lag and context feature ────────────────")
     df = add_lag_and_contexte_features_target(df, iso_objective=iso_objective)
-    
+
     if add_lag_frontiere:
         print(f"\n── Adding lag and context features for neighbor {FRONTIERE.get(iso_objective, [])} ────────────────")
         for neighbor in FRONTIERE.get(iso_objective, []):
@@ -158,20 +166,15 @@ def build_feature_dataframe(
 
     # ── Step 8: catch24 features ──────────────────────────────────────────────
     print(f"\n── Step 7: catch24 features for {country_objective} ──────────────────")
-    df = add_catch24_features(df, window=window, step=step, time_interval=time_interval, country=iso_objective)
+    if add_catch24:
+        print(f"\n── Step 8: catch24 features for {country_objective} ──────────────────")
+        df = add_catch24_features(df, window=window, step=step, time_interval=time_interval, country=iso_objective)
 
-    df = df.drop(columns=[
-        'hour',
-        'day_of_week',
-        'month',
-        'quarter',
-        'year',
-        'day_of_year'
-    ])
+    df = df.drop(columns=['hour', 'day_of_week', 'month', 'quarter', 'year', 'day_of_year'])
 
     if drop_nan:
         df_clean = df.dropna()
-        print(f"Rows dropped: {len(df) - len(df_clean)} to avoid nan due to target distance and catch22 features")
+        print(f"Rows dropped: {len(df) - len(df_clean)}")
 
     # ── Save ──────────────────────────────────────────────────────────────────
     print("\n── Saving to pickle ─────────────────────────────────────────────")
