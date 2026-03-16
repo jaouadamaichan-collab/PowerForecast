@@ -456,7 +456,7 @@ baseline_model = init_baseline()
 baseline_score = baseline_model.evaluate(X_test, y_test)
 print(f"- The Baseline MAE on the test set is equal to {round(baseline_score[1], 2)} Euros")
 
-print(f"- The LSTM MAE on the test set is equal to {round(res[1], 2)} Celsius degrees")
+print(f"- The LSTM MAE on the test set is equal to {round(res[1], 2)} Euros")
 print(f"🔥 Improvement of the LSTM model over the baseline (on this fold for the test set) = : {round((1 - (res[1] / baseline_score[1])) * 100, 2)} % 🔥")
 
 # Récapitulatif de tous les hyperparamètres globaux pour la reproductibilité
