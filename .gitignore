@@ -16,3 +16,5 @@ agents/
 *.ipynb
 *.egg-info/
 *.png
+.DS_Store
+analysis_runs.py

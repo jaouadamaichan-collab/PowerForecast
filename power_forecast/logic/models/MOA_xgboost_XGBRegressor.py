@@ -47,6 +47,9 @@ from sklearn.metrics import mean_squared_error
 
 from xgboost import XGBRegressor
 
+from power_forecast.logic.utils.save_run import save_run
+from power_forecast.logic.utils.upload_run import upload_run
+
 
 # =========================================================
 # HYPERPARAMETRES OPTIMAUX (issus de GridSearchCV)
@@ -143,3 +146,4 @@ def run_xgb_without_scaling(df):
         "train_mae": train_mae,
         "test_mae": test_mae
     }
+
