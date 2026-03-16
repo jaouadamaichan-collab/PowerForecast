@@ -236,8 +236,8 @@ def get_X_y(
     return np.array(X), np.array(y)
 
 
-N_TRAIN = 6666  # Nombre de séquences d'entraînement générées aléatoirement
-N_TEST = 3333   # Nombre de séquences de test générées aléatoirement
+N_TRAIN = 1000  # Nombre de séquences d'entraînement générées aléatoirement
+N_TEST = 100   # Nombre de séquences de test générées aléatoirement
 
 X_train, y_train = get_X_y(fold_train, N_TRAIN, INPUT_LENGTH, OUTPUT_LENGTH)
 X_test, y_test = get_X_y(fold_test, N_TEST, INPUT_LENGTH, OUTPUT_LENGTH)
