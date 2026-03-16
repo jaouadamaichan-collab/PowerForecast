@@ -24,7 +24,7 @@ pd.set_option('display.max_columns', None)
 # `load_from_pickle=False` force un rechargement complet plutôt que d'utiliser un cache.
 df = build_feature_dataframe(
     filepath='raw_data/all_countries.csv',
-    load_from_pickle = True, #True if you want to load from a previously saved pickle file, False to build the dataframe from scratch (which takes more time)
+    load_from_pickle = False, #True if you want to load from a previously saved pickle file, False to build the dataframe from scratch (which takes more time)
     country_objective='France',
     target_day_distance=2,
     time_interval='h', #Time interval for resampling the data (e.g., 'h' for hourly, 'D' for daily)
