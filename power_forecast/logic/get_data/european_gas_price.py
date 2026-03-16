@@ -20,7 +20,7 @@ NOTE : Le TTF (Title Transfer Facility, Pays-Bas) est le benchmark
        Unité : EUR/MWh  (ou USD/MMBtu selon la source Yahoo)
 
 DÉPENDANCES :
-    pip install yfinance pandas numpy scipy matplotlib
+    pip install yfinance
 
 =============================================================================
 """
