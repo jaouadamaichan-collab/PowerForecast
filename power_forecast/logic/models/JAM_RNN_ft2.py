@@ -145,16 +145,17 @@ print(f"\nShape après feature selection : {df_selected.shape}")
 TARGET          = 'FRA'
 N_FEATURES      = df_selected.shape[1]
 
-FOLD_LENGTH      = 24 * 365 * 2
-FOLD_STRIDE      = 24 * 91
+FOLD_LENGTH      = 24 * 365 * 4
+FOLD_STRIDE      = 24 * 182
 TRAIN_TEST_RATIO = 0.9
 
-INPUT_LENGTH    = 504
+INPUT_LENGTH    = 24 * 7
 OUTPUT_LENGTH   = 1
-SEQUENCE_STRIDE = 48
+SEQUENCE_STRIDE = 24
 DAY_AHEAD_GAP   = 0
 
 print(f"N_FEATURES = {N_FEATURES} | INPUT_LENGTH = {INPUT_LENGTH}h = {INPUT_LENGTH//24} jours")
+print(f"FOLD_LENGTH = {FOLD_LENGTH}h = {FOLD_LENGTH//24/365:.1f} ans")
 
 
 def get_folds(
