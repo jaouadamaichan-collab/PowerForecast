@@ -95,6 +95,7 @@ def add_rolling_zscore(df: pd.DataFrame, target: str, window: int = 168) -> pd.D
     """
     rolling_mean = df[target].rolling(window=window, min_periods=1).mean()
     rolling_std  = df[target].rolling(window=window, min_periods=1).std().replace(0, 1)
+    df[f'{target}_zscore'] = (df[target] - rolling_mean) / rolling_std
     df[f'{target}_zscore'] = df[f'{target}_zscore'].fillna(0)
     return df
 

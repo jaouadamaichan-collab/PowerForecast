@@ -15,27 +15,38 @@ Le pipeline comprend :
 """
 
 import pandas as pd
-from power_forecast.logic.get_data.build_dataframe import build_common_dataframe add_features_RNN
+from power_forecast.logic.get_data.build_dataframe import build_common_dataframe, add_features_RNN
 # %load_ext autoreload
 # %autoreload 2
 pd.set_option('display.max_columns', None)
 
 # Chargement du DataFrame de features à partir d'un CSV multi-pays.
 # `load_from_pickle=False` force un rechargement complet plutôt que d'utiliser un cache.
-df = build_feature_dataframe(
-    filepath='raw_data/all_countries.csv',
-    load_from_pickle = False, #True if you want to load from a previously saved pickle file, False to build the dataframe from scratch (which takes more time)
-    country_objective='France',
+
+df_common = build_common_dataframe(
+    filepath="raw_data/all_countries.csv",
+    country_objective="France",
     target_day_distance=2,
-    time_interval='h', #Time interval for resampling the data (e.g., 'h' for hourly, 'D' for daily)
-    save_name='df_with_features',
-    drop_nan=True, #Drop rows with NaN values (due to target distance and catch24 features)
-    keep_only_neighbors=True, #Keep only neighboring countries for the lag frontiere features (instead of all countries)
-    add_lag_frontiere=True, #Add lag features of neighboring countries (based on FRONTIERE dict)
-    add_crisis=True, #Add crisis features (based on CRISIS_PERIODS dict)
-    add_gen_load_forecast=True, #Add generation and load forecast features (based on GEN_LOAD_FORECAST dict)
-    add_catch24=True, #Add catch24 features (based on WINDOW_CATCH22 and STEP_CATCH22 parameters
+    time_interval="h",
+    keep_only_neighbors=True,
+    add_meteo=True,
+    add_crisis=True,
+    add_entsoe=True,
 )
+
+df_rnn = add_features_RNN(
+    df=df_common,
+    country_objective="France",
+    target_day_distance=2,
+    add_future_time_features=True,
+    add_future_meteo=True,
+)
+
+columns_rnn = df_rnn.columns
+print(df_rnn.shape)
+print(columns_rnn)
+
+df= df_rnn
 
 from typing import Dict, List, Tuple, Sequence
 import numpy as np
