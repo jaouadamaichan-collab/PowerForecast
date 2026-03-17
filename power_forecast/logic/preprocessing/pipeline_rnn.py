@@ -1,15 +1,18 @@
 import numpy as np
 import pandas as pd
+from sklearn.preprocessing import StandardScaler
 from power_forecast.params import *
 from power_forecast.logic.get_data.build_dataframe import (
     build_common_dataframe,
-    add_features_XGB,
     add_features_RNN,
 )
 from power_forecast.logic.preprocessing.train_test_split import (
     train_test_split_general,
     train_test_split_RNN_optimized,
-    train_test_split_XGB_optimized,
+)
+from power_forecast.logic.preprocessing.split_X_y_standardize import (
+    get_X_y_vectorized_RNN,
+    get_Xi_yi_single_sequence,
 )
 
 
@@ -38,10 +41,11 @@ cutoff_day = pd.Timestamp("2023-10-01", tz="UTC")
 ##   uniquement lorsque max_train_test_split = False.
 ## ==============================================================
 
-#Other inputs
+# Other inputs
 input_length = 14 * 24  # 3 weeks context fed to RNN
+stride_sequences = 24 * 3  # doit etre plus haute que output length
 prediction_horizon_days = 2
-country_price_objective = 'France'
+country_price_objective = "France"
 prediction_length = prediction_horizon_days * 24  # predict 48h of target day
 
 df_common = build_common_dataframe(
@@ -76,23 +80,63 @@ if max_train_test_split:
         number_days_to_predict=prediction_horizon_days,
         input_length=input_length,  # 168h lookback
     )
-else:
+if not max_train_test_split:
     # RNN
-    fold_train_rnn, fold_test_rnn = train_test_split_general(
-        df=df, cutoff=cutoff_day
-    )
+    fold_train_rnn, fold_test_rnn = train_test_split_general(df=df, cutoff=cutoff_day)
 
 
-        
-# # XGB 
-# split X and y in both train and test
-# standardize X_train and X_test with fit_transform and transform
-# create X_train and X_val
+scaler = StandardScaler()
 
+# ── Train ──────────────────────────────────────────────────────────────────
+X_train, y_train = get_X_y_vectorized_RNN(
+    fold=fold_train_rnn,
+    feature_cols=fold_train_rnn.columns,
+    country_objective=country_price_objective,
+    stride=stride_sequences,
+    input_length=input_length,
+    output_length=prediction_length,
+    scaler=scaler,
+    fit_scaler=True,
+)
 
-# # RNN 
-# split X and y in both train and test
-# standardize X_train and X_test with fit_transform and transform
-# create X_train and X_val
+# ── Test ───────────────────────────────────────────────────────────────────
+X_new, y_true = get_X_y_vectorized_RNN(
+    fold=fold_test_rnn,
+    feature_cols=fold_test_rnn.columns,
+    country_objective=country_price_objective,
+    stride=stride_sequences,
+    input_length=input_length,
+    output_length=prediction_length,
+    scaler=scaler,
+    fit_scaler=False,
+)
 
-# Remember to denormalize preidciton at the end
+# # ── X_new : dernière séquence du fold_test pour prédiction ────────────────
+# X_new = X_test[-1:]  # (1, input_length, n_features) -> deja bon dimension
+
+if max_train_test_split:
+    print("📐 Shapes finales :")
+    print(f"    X_train: {X_train.shape} → (n_seq, input_length, n_features)")
+    print(f"    y_train: {y_train.shape} → (n_seq, output_length)")
+    print(f"    X_new: {X_new.shape} → (1, input_length, n_features)")
+    print(f"    y_true: {y_true.shape}→ (n_seq, output_length)")
+
+# ── Validation : split chronologique SUR LES SÉQUENCES (pas sur le fold brut)
+if not max_train_test_split:
+    val_ratio = 0.2
+    split_idx = int(len(X_train) * (1 - val_ratio))
+
+    X_val = X_train[split_idx:]  # séquences val → suivent chronologiquement train
+    y_val = y_train[split_idx:]
+    X_train = X_train[:split_idx]  # on réduit X_train en conséquence
+    y_train = y_train[:split_idx]
+    print("📐 Shapes finales :")
+    print(f"    X_train: {X_train.shape} → (n_seq, input_length, n_features)")
+    print(f"    y_train: {y_train.shape} → (n_seq, output_length)")
+    print(f"    X_val: {X_val.shape} → (n_seq, input_length, n_features)")
+    print(f"    y_val: {y_val.shape} → (n_seq, output_length)")
+    print(f"    X_test: {X_new.shape} → (1, input_length, n_features)")
+    print(f"    y_test: {y_true.shape}→ (n_seq, output_length)")
+
+input_shape=X_train.shape[1:]
+output_length=y_train.shape[1]

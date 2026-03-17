@@ -80,10 +80,10 @@ def X_y_standardizer_with_val_XGB(
 
 
 # ── Core: single sequence ──────────────────────────────────────────────────
-def get_Xi_yi(
+def get_Xi_yi_single_sequence(
     fold: pd.DataFrame,
     feature_cols: list,
-    target_col: str,
+    country_objective: str,
     start_idx: int,
     input_length: int = INPUT_LENGTH,
     output_length: int = OUTPUT_LENGTH,
@@ -96,20 +96,22 @@ def get_Xi_yi(
 
     y commence IMMÉDIATEMENT après la fin de X (pas de horizon).
     """
+    target_col = VILLE_TO_ISO.get(country_objective, None)
     X_i = fold[feature_cols].iloc[start_idx : start_idx + input_length].values
     y_start = start_idx + input_length
     y_i = fold[target_col].iloc[y_start : y_start + output_length].values
     return X_i, y_i
 
-
 # ── Vectorized: all sequences at once ─────────────────────────────────────
 def get_X_y_vectorized_RNN(
     fold: pd.DataFrame,
     feature_cols: list,
-    target_col: str,
+    country_objective: str,
     stride: int,
     input_length: int = INPUT_LENGTH,
     output_length: int = OUTPUT_LENGTH,
+    scaler=None,       # StandardScaler fitté sur X_train, ou None
+    fit_scaler=False,  # True uniquement pour le fold train
 ) -> tuple:
     """
     Construit toutes les séquences (X, y) par fenêtre glissante vectorisée.
@@ -135,6 +137,7 @@ def get_X_y_vectorized_RNN(
         y : np.ndarray de shape (n_seq, output_length)
     """
     # ── garde-fou leakage ──────────────────────────────────────────────────
+    
     if stride < output_length:
         raise ValueError(
             f"⛔ Leakage détecté : stride={stride} < output_length={output_length}. "
@@ -148,6 +151,8 @@ def get_X_y_vectorized_RNN(
             f"Fold trop court : {len(fold)} lignes, minimum requis = {total_span}."
         )
 
+    target_col = VILLE_TO_ISO.get(country_objective, None)
+    
     X_all = fold[feature_cols].values  # (n_rows, n_features)
     y_all = fold[target_col].values    # (n_rows,)
 
@@ -160,11 +165,23 @@ def get_X_y_vectorized_RNN(
     X_wins = X_wins[::stride]  # (n_seq, total_span, n_features)
 
     # extraction X et y
-    X = X_wins[:, :input_length, :]   # (n_seq, input_length, n_features)
+    X = X_wins[:, :input_length, :].copy()   # (n_seq, input_length, n_features), .copy()  # ← sécurise la contiguïté mémoire
 
     y_wins = np.lib.stride_tricks.sliding_window_view(y_all, total_span)[::stride]
     y = y_wins[:, input_length:]      # (n_seq, output_length)
 
+    # ── standardisation de X uniquement ───────────────────────────────────
+    if scaler is not None:
+        n_seq, in_len, n_feat = X.shape
+        X_flat = X.reshape(-1, n_feat)          # (n_seq * input_length, n_features)
+
+        if fit_scaler:
+            X_flat = scaler.fit_transform(X_flat)
+        else:
+            X_flat = scaler.transform(X_flat)
+
+        X = X_flat.reshape(n_seq, in_len, n_feat)
+        
     print(
         f"  → {len(X)} séquences générées  "
         f"(fold={len(fold)}h, stride={stride}h, span={total_span}h, "

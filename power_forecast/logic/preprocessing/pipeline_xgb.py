@@ -60,12 +60,13 @@ df = add_features_XGB(
     df_common,
     country_objective=country_price_objective,
     target_day_distance=prediction_horizon_days,
-    add_lag_frontiere=False,  # Si tu veux ajouter lags pour tout prix frontiere
+    add_lag_frontiere=True,  # Si tu veux ajouter lags pour tout prix frontiere n_pays x (n_LAGS_XGB_FRONTIERE + 2 * ROLLING_WINDOWS_XGB_FRONTIERE)
     drop_initial_nans=True,
 )
 
 columns_xgb = df.columns
 print(df.shape)
+print(columns_xgb)
 
 
 # if max_train_test_split = True il train jusqu'a derniere moment possible basè sur objective_day
@@ -76,7 +77,7 @@ if max_train_test_split:
         objective_day=objective_day,
         number_days_to_predict=prediction_horizon_days,
     )
-else:
+if not max_train_test_split:
     # XGB
     fold_train_xgb, fold_test_xgb = train_test_split_general(df=df, cutoff=cutoff_day)
 
@@ -90,11 +91,11 @@ if max_train_test_split:
     )
     print("✅ Mode : entraînement maximal (max_train_test_split = True)")
     print(f"   X_train : {X_train.shape}")
-    print(f"   y_train        : {y_train.shape}")
-    print(f"   X_new  : {X_new.shape}")
-    print(f"   y_true         : {y_true.shape}")
+    print(f"   y_train : {y_train.shape}")
+    print(f"   X_new   : {X_new.shape}")
+    print(f"   y_true  : {y_true.shape}")
 
-else:
+if not max_train_test_split:
     # Avec jeu de validation, split chronologique sur cutoff_day
     X_train, X_val, X_test, y_train, y_val, y_test = X_y_standardizer_with_val_XGB(
         fold_train=fold_train_xgb,
@@ -104,8 +105,8 @@ else:
     )
     print("✅ Mode : split classique avec validation (max_train_test_split = False)")
     print(f"   X_train : {X_train.shape}")
-    print(f"   y_train        : {y_train.shape}")
+    print(f"   y_train : {y_train.shape}")
     print(f"   X_val   : {X_val.shape}")
-    print(f"   y_val          : {y_val.shape}")
+    print(f"   y_val   : {y_val.shape}")
     print(f"   X_test  : {X_test.shape}")
-    print(f"   y_test         : {y_test.shape}")
+    print(f"   y_test  : {y_test.shape}")
