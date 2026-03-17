@@ -27,12 +27,22 @@ def _make_serializable(obj):
     return obj
 
 
-def save_run(results, author=None):
+def _is_keras_model(model):
+    """Détecte si le modèle est un modèle Keras/TensorFlow."""
+    try:
+        import tensorflow as tf
+        return isinstance(model, tf.keras.Model)
+    except ImportError:
+        return False
+
+
+def save_run(results, author=None, note=None):
     """
     Sauvegarde un run ML localement.
 
     Crée un dossier horodaté contenant :
-        - model.pkl      : le modèle entraîné
+        - model.pkl      : modèles sklearn/xgboost/catboost
+        - model.keras    : modèles TensorFlow/Keras
         - metrics.json   : les métriques
         - run_info.json  : infos du run (auteur, modèle, date, métriques)
 
@@ -44,6 +54,8 @@ def save_run(results, author=None):
     author : str, optional
         Nom de l'auteur. Si absent, utilise la variable
         d'environnement POWERFORECAST_AUTHOR, sinon 'unknown'.
+    note : str, optional
+        Courte indication sur le modèle.
 
     Returns
     -------
@@ -53,7 +65,7 @@ def save_run(results, author=None):
     Examples
     --------
     >>> run_path = save_run(results)
-    >>> run_path = save_run(results, author="jean")
+    >>> run_path = save_run(results, author="Mohamed_LSTM_57f")
     """
 
     if "model" not in results:
@@ -71,9 +83,16 @@ def save_run(results, author=None):
     )
     os.makedirs(run_dir, exist_ok=True)
 
-    # --- model.pkl ---
-    with open(os.path.join(run_dir, "model.pkl"), "wb") as f:
-        pickle.dump(model, f)
+    # --- Sauvegarder le modèle ---
+    if _is_keras_model(model):
+        model_path = os.path.join(run_dir, "model.keras")
+        model.save(model_path)
+        model_file = "model.keras"
+    else:
+        model_path = os.path.join(run_dir, "model.pkl")
+        with open(model_path, "wb") as f:
+            pickle.dump(model, f)
+        model_file = "model.pkl"
 
     # --- metrics.json ---
     metrics = _make_serializable(
@@ -86,7 +105,9 @@ def save_run(results, author=None):
     run_info = {
         "run_id"    : f"{run_id}_{model_name}",
         "model"     : model_name,
+        "model_file": model_file,
         "author"    : author,
+        "note"      : note or "",
         "created_at": datetime.now().isoformat(),
         "metrics"   : metrics.get("metrics", {}),
     }
