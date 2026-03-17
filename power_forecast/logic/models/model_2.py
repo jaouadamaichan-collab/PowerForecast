@@ -513,7 +513,7 @@ mae_baseline = baseline_model.evaluate(X_test, y_test_orig, verbose=0)[1]
 print(f"\n--- [FIX-10] Sanity Check ---")
 print(f"MAE LSTM     sur TRAIN : {round(mae_train, 2)}")
 print(f"MAE LSTM     sur TEST  : {round(mae_lstm, 2)}")
-print(f"MAE Baseline sur TRAIN : {round(mae_baseline_train, 2)}")
+print(f"MAE Baseline sur TRAIN : {round(mae_baseline, 2)}")
 print(f"MAE Baseline sur TEST  : {round(baseline_score[1], 2)}")
 print()
 if mae_train > baseline_score[1] * 0.9:
