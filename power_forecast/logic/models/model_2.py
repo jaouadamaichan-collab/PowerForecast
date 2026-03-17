@@ -390,7 +390,6 @@ model.summary()
 # 2 - Entraînement
 # ====================================
 model, history = fit_model(model, X_train, y_train_scaled)
-plot_history(history)
 
 # ====================================
 # 3 - Évaluation sur le test set
