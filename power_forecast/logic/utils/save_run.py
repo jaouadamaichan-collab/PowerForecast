@@ -1,94 +1,98 @@
-"""
-Utility function to save ML runs.
-
-Centralized utility to save:
-- trained models
-- evaluation metrics
-
-This function works for any model (sklearn, xgboost, tensorflow, custom models).
-"""
-
 import os
 import json
 import pickle
+import numpy as np
+import pandas as pd
 from datetime import datetime
 
 
-def save_run(results):
+def _make_serializable(obj):
+    """Convertit récursivement tout objet en type JSON-serializable."""
+    if isinstance(obj, pd.DataFrame):
+        if "Set" in obj.columns:
+            return obj.set_index("Set").to_dict(orient="index")
+        return obj.to_dict(orient="records")
+    elif isinstance(obj, pd.Series):
+        return obj.to_dict()
+    elif isinstance(obj, dict):
+        return {k: _make_serializable(v) for k, v in obj.items()}
+    elif isinstance(obj, (list, tuple)):
+        return [_make_serializable(i) for i in obj]
+    elif isinstance(obj, np.integer):
+        return int(obj)
+    elif isinstance(obj, np.floating):
+        return float(obj)
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()
+    return obj
+
+
+def save_run(results, author=None):
     """
-    Save a trained model and its metrics locally.
+    Sauvegarde un run ML localement.
+
+    Crée un dossier horodaté contenant :
+        - model.pkl      : le modèle entraîné
+        - metrics.json   : les métriques
+        - run_info.json  : infos du run (auteur, modèle, date, métriques)
 
     Parameters
     ----------
     results : dict
-        Dictionary returned by a model training function.
-        Must contain at least:
-        - model
-
-    Optional keys (if present they will be saved):
-        - train_rmse
-        - test_rmse
-        - train_mae
-        - test_mae
+        Dict retourné par evaluate_model ou une fonction run_xxx.
+        Doit contenir au minimum la clé 'model'.
+    author : str, optional
+        Nom de l'auteur. Si absent, utilise la variable
+        d'environnement POWERFORECAST_AUTHOR, sinon 'unknown'.
 
     Returns
     -------
     run_dir : str
-        Path of the saved run directory.
+        Chemin local du dossier du run.
+
+    Examples
+    --------
+    >>> run_path = save_run(results)
+    >>> run_path = save_run(results, author="jean")
     """
 
     if "model" not in results:
-        raise ValueError("Results dictionary must contain a 'model' key.")
+        raise ValueError("results doit contenir la clé 'model'.")
 
-    model = results["model"]
-
-    # detect model name automatically
+    model      = results["model"]
     model_name = type(model).__name__
+    run_id     = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    author     = author or os.getenv("POWERFORECAST_AUTHOR", "unknown")
 
-    # timestamp
-    run_id = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-
-    # project root
-    project_root = os.getcwd()
-
-    # run directory
+    # --- Dossier du run ---
     run_dir = os.path.join(
-        project_root,
-        "runs",
+        os.getcwd(), "runs",
         f"{run_id}_{model_name}"
     )
-
     os.makedirs(run_dir, exist_ok=True)
 
-    # save model
+    # --- model.pkl ---
     with open(os.path.join(run_dir, "model.pkl"), "wb") as f:
         pickle.dump(model, f)
 
-    # save metrics (everything except model)
-    metrics = {k: v for k, v in results.items() if k != "model"}
-
+    # --- metrics.json ---
+    metrics = _make_serializable(
+        {k: v for k, v in results.items() if k != "model"}
+    )
     with open(os.path.join(run_dir, "metrics.json"), "w") as f:
         json.dump(metrics, f, indent=2)
 
-    print(f"\n✅ Run enregistré localement dans : {run_dir}\n")
+    # --- run_info.json ---
+    run_info = {
+        "run_id"    : f"{run_id}_{model_name}",
+        "model"     : model_name,
+        "author"    : author,
+        "created_at": datetime.now().isoformat(),
+        "metrics"   : metrics.get("metrics", {}),
+    }
+    with open(os.path.join(run_dir, "run_info.json"), "w") as f:
+        json.dump(run_info, f, indent=2)
 
-    print(
-        "⚠️ Information équipe :\n"
-        "Ce run est actuellement sauvegardé uniquement sur votre machine (VM ou ordinateur local).\n\n"
-
-        "Le dossier contient :\n"
-        "- model.pkl : le modèle entraîné\n"
-        "- metrics.json : les métriques du run\n\n"
-
-        "Pour partager ce run avec l'équipe :\n"
-        "1️⃣ Aller dans le dossier 'runs/' du projet.\n"
-        "2️⃣ Récupérer le dossier correspondant au run.\n"
-        "3️⃣ Envoyer ce dossier :\n"
-        "   - via Slack / Teams / Drive\n"
-        "   - ou à un membre de l'équipe ayant accès au Google Cloud Storage.\n\n"
-
-        "4️⃣ La personne ayant accès au storage peut uploader avec :\n"
-        "   gsutil cp -r runs/<nom_du_run> gs://powerforecast-runs/\n"
-    )
+    print(f"✅ Run sauvegardé : {run_dir}")
 
     return run_dir
