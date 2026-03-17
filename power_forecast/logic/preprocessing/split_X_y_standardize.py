@@ -15,7 +15,7 @@ def X_y_standardizer_XGB(fold_train: pd.DataFrame, fold_test: pd.DataFrame, coun
 
     Retourne
     --------
-    X_train_scaled, X_test_scaled, y_train, y_test
+    X_train_scaled, X_test_scaled, y_train, y_test — tous pd.DataFrame / pd.Series
     """
     iso_objective = VILLE_TO_ISO.get(country_objective, None)
 
@@ -26,8 +26,17 @@ def X_y_standardizer_XGB(fold_train: pd.DataFrame, fold_test: pd.DataFrame, coun
     X_test  = fold_test.drop(columns=[iso_objective])
 
     scaler = StandardScaler()
-    X_train_scaled = scaler.fit_transform(X_train)
-    X_test_scaled  = scaler.transform(X_test)
+
+    X_train_scaled = pd.DataFrame(
+        scaler.fit_transform(X_train),
+        columns=X_train.columns,
+        index=X_train.index,
+    )
+    X_test_scaled = pd.DataFrame(
+        scaler.transform(X_test),
+        columns=X_test.columns,
+        index=X_test.index,
+    )
 
     return X_train_scaled, X_test_scaled, y_train, y_test
 
@@ -39,19 +48,19 @@ def X_y_standardizer_with_val_XGB(
     val_ratio: float = 0.2,
 ):
     """
-    Identique à X_y_standardizer mais découpe chronologiquement X_train
+    Identique à X_y_standardizer_XGB mais découpe chronologiquement X_train
     en un jeu d'entraînement réduit et un jeu de validation.
 
     Paramètres
     ----------
-    fold_train       : pd.DataFrame — données d'entraînement (timeseries)
-    fold_test        : pd.DataFrame — données de test (timeseries)
-    country_objective: str          — nom du pays cible (clé dans VILLE_TO_ISO)
-    val_ratio        : float        — proportion de fin de train utilisée pour val (défaut 0.2)
+    fold_train        : pd.DataFrame — données d'entraînement (timeseries)
+    fold_test         : pd.DataFrame — données de test (timeseries)
+    country_objective : str          — nom du pays cible (clé dans VILLE_TO_ISO)
+    val_ratio         : float        — proportion de fin de train utilisée pour val (défaut 0.2)
 
     Retourne
     --------
-    X_train_scaled, X_val_scaled, X_test_scaled, y_train, y_val, y_test
+    X_train_scaled, X_val_scaled, X_test_scaled, y_train, y_val, y_test — tous pd.DataFrame / pd.Series
     """
     iso_objective = VILLE_TO_ISO.get(country_objective, None)
 
@@ -70,13 +79,24 @@ def X_y_standardizer_with_val_XGB(
     y_val   = y_full_train.iloc[split_idx:]
 
     scaler = StandardScaler()
-    X_train_scaled = scaler.fit_transform(X_train)
-    X_val_scaled   = scaler.transform(X_val)
-    X_test_scaled  = scaler.transform(X_test)
+
+    X_train_scaled = pd.DataFrame(
+        scaler.fit_transform(X_train),
+        columns=X_train.columns,
+        index=X_train.index,
+    )
+    X_val_scaled = pd.DataFrame(
+        scaler.transform(X_val),
+        columns=X_val.columns,
+        index=X_val.index,
+    )
+    X_test_scaled = pd.DataFrame(
+        scaler.transform(X_test),
+        columns=X_test.columns,
+        index=X_test.index,
+    )
 
     return X_train_scaled, X_val_scaled, X_test_scaled, y_train, y_val, y_test
-
-
 
 
 # ── Core: single sequence ──────────────────────────────────────────────────

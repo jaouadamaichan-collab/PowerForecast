@@ -141,4 +141,17 @@ if not max_train_test_split:
 input_shape=X_train.shape[1:]
 output_length=y_train.shape[1]
 
+if  max_train_test_split:
+    print("🔍 Types et dtypes :")
+    print(f"   X_train : {type(X_train)} | dtype: {X_train.dtype} | shape: {X_train.shape}")
+    print(f"   y_train : {type(y_train)} | dtype: {y_train.dtype} | shape: {y_train.shape}")
+    print(f"   X_new   : {type(X_new)}   | dtype: {X_new.dtype}   | shape: {X_new.shape}")
+    print(f"   y_true  : {type(y_true)}  | dtype: {y_true.dtype}  | shape: {y_true.shape}")
 
+if not max_train_test_split:
+    print(f"   X_train : {type(X_train)} | dtype: {X_train.dtype} | shape: {X_train.shape}")
+    print(f"   y_train : {type(y_train)} | dtype: {y_train.dtype} | shape: {y_train.shape}")
+    print(f"   X_test   : {type(X_new)}   | dtype: {X_new.dtype}   | shape: {X_new.shape}")
+    print(f"   y_test  : {type(y_true)}  | dtype: {y_true.dtype}  | shape: {y_true.shape}")
+    print(f"   X_val   : {type(X_val)}   | dtype: {X_val.dtype}   | shape: {X_val.shape}")
+    print(f"   y_val   : {type(y_val)}   | dtype: {y_val.dtype}   | shape: {y_val.shape}")
