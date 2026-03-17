@@ -3,7 +3,8 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from power_forecast.logic.preprocessing.preprocessor import preproc_histxgb_X_new
 from power_forecast.logic.models.registry import load_model_ml
-from power_forecast.logic.utils.others import load_df
+from power_forecast.logic.utils.others import load_df, load_X_test_gcs
+from power_forecast.logic.utils.upload_run import upload_run
 
 app = FastAPI()
 
@@ -16,10 +17,10 @@ app.add_middleware(
 )
 
 # ── Chargement au démarrage ────────────────────────────────────────────────────
-app.state.model = load_model_ml(model_name='HistXGB_v4')
+app.state.model = load_model_ml()
 
 try:
-    app.state.df_cache = load_df('df_catch24_timeseries')
+    app.state.df_cache = load_X_test_gcs()
     print("✅ Feature DataFrame chargé depuis le cache pickle")
 except Exception as e:
     print(f"⚠️  Impossible de charger le cache pickle : {e}")

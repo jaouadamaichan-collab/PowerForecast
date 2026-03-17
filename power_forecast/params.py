@@ -356,3 +356,6 @@ LAGS_FRONTIERE = [
     72,  # 2-3 jours
     168,
 ]
+
+GCS_BUCKET='power_forecast_bucket'
+GOOGLE_CLOUD_PROJECT='bootcamp-wagon-2195'

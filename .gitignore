@@ -18,3 +18,5 @@ agents/
 *.png
 .DS_Store
 analysis_runs.py
+
+.env.yaml
