@@ -1,9 +1,9 @@
 from pathlib import Path
 
 # ── Paramètres globaux ───────────────────────────────────────────────────────────────
-INPUT_LENGTH = 14 * 24  # 2 weeks context fed to RNN
-OUTPUT_LENGTH = 24  # predict 24h of target day
-HORIZON = 24  # skip 24h between input end and output
+INPUT_LENGTH = 21 * 24  # 2 weeks context fed to RNN
+OUTPUT_LENGTH = 48  # predict 24h of target day
+HORIZON = 0  # skip 24h between input end and output
 
 VALID_STEPS = {"h", "D"}
 
@@ -40,7 +40,7 @@ ROLLING_WINDOWS_XGB_FRONTIERE = [
     12,
     24,
     48,
-]
+] # every rollwing windows compute two values for each country
 
 
 

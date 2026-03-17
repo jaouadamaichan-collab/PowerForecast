@@ -47,6 +47,7 @@ def list_runs():
 def load_run(run_id):
     """
     Télécharge et charge un modèle depuis GCS.
+    Supporte sklearn/xgboost (.pkl) et TensorFlow/Keras (.keras).
 
     Parameters
     ----------
@@ -67,26 +68,37 @@ def load_run(run_id):
     Examples
     --------
     >>> model = load_run("2026-03-13_13-01-12_XGBRegressor")
+    >>> model = load_run("2026-03-17_14-00-00_Sequential")
     """
 
     bucket_name = os.getenv("GCS_BUCKET")
     client      = storage.Client()
     bucket      = client.bucket(bucket_name)
 
-    blob_path = f"runs/{run_id}/model.pkl"
-    blob      = bucket.blob(blob_path)
+    # --- Détecter le type de fichier modèle ---
+    keras_blob = bucket.blob(f"runs/{run_id}/model.keras")
+    pkl_blob   = bucket.blob(f"runs/{run_id}/model.pkl")
 
-    if not blob.exists():
+    if keras_blob.exists():
+        # Modèle Keras — sauvegarde dans dossier temporaire
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            local_path = os.path.join(tmp_dir, "model.keras")
+            keras_blob.download_to_filename(local_path)
+            import tensorflow as tf
+            model = tf.keras.models.load_model(local_path)
+
+    elif pkl_blob.exists():
+        # Modèle sklearn/xgboost/catboost
+        with tempfile.NamedTemporaryFile(suffix=".pkl", delete=False) as tmp:
+            pkl_blob.download_to_filename(tmp.name)
+            with open(tmp.name, "rb") as f:
+                model = pickle.load(f)
+
+    else:
         raise FileNotFoundError(
             f"Run introuvable : {run_id}\n"
             f"→ Utilise list_runs() pour voir les runs disponibles."
         )
-
-    # Téléchargement dans un fichier temporaire
-    with tempfile.NamedTemporaryFile(suffix=".pkl", delete=False) as tmp:
-        blob.download_to_filename(tmp.name)
-        with open(tmp.name, "rb") as f:
-            model = pickle.load(f)
 
     print(f"✅ Modèle chargé : {run_id}")
     print(f"   Type : {type(model).__name__}")

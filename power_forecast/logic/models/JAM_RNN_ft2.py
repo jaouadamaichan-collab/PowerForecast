@@ -95,6 +95,7 @@ def add_rolling_zscore(df: pd.DataFrame, target: str, window: int = 168) -> pd.D
     """
     rolling_mean = df[target].rolling(window=window, min_periods=1).mean()
     rolling_std  = df[target].rolling(window=window, min_periods=1).std().replace(0, 1)
+    df[f'{target}_zscore'] = (df[target] - rolling_mean) / rolling_std
     df[f'{target}_zscore'] = df[f'{target}_zscore'].fillna(0)
     return df
 
@@ -144,16 +145,17 @@ print(f"\nShape après feature selection : {df_selected.shape}")
 TARGET          = 'FRA'
 N_FEATURES      = df_selected.shape[1]
 
-FOLD_LENGTH      = 24 * 365 * 2
-FOLD_STRIDE      = 24 * 91
+FOLD_LENGTH      = 24 * 365 * 4
+FOLD_STRIDE      = 24 * 182
 TRAIN_TEST_RATIO = 0.9
 
-INPUT_LENGTH    = 504
+INPUT_LENGTH    = 24 * 7
 OUTPUT_LENGTH   = 1
-SEQUENCE_STRIDE = 48
+SEQUENCE_STRIDE = 24
 DAY_AHEAD_GAP   = 0
 
 print(f"N_FEATURES = {N_FEATURES} | INPUT_LENGTH = {INPUT_LENGTH}h = {INPUT_LENGTH//24} jours")
+print(f"FOLD_LENGTH = {FOLD_LENGTH}h = {FOLD_LENGTH//24/365:.1f} ans")
 
 
 def get_folds(
@@ -331,9 +333,7 @@ N_TEST  = 48
 
 
 
-def get_X_y_strides(fold: pd.DataFrame, input_length: int, output_length: int,
-                    sequence_stride: int) -> Tuple[np.ndarray, np.ndarray]:
-    """
+"""
     Construit un jeu de données en faisant glisser une fenêtre à pas fixe sur le fold.
 
     Args:
@@ -345,15 +345,16 @@ def get_X_y_strides(fold: pd.DataFrame, input_length: int, output_length: int,
     Returns:
         Tuple[np.ndarray, np.ndarray]: (X, y)
     """
+def get_X_y_strides(fold, input_length, output_length, sequence_stride, gap=24):
     X, y = [], []
     for i in range(0, len(fold), sequence_stride):
-        if (i + input_length + output_length) >= len(fold):
+        end = i + input_length + gap + output_length
+        if end >= len(fold):
             break
-        X_i = fold.iloc[i:i + input_length, :]
-        y_i = fold.iloc[i + input_length:i + input_length + output_length, :][[TARGET]]
-        X.append(X_i)
-        y.append(y_i)
-    return (np.array(X), np.array(y))
+        X.append(fold.iloc[i:i + input_length].values)
+        y.append(fold.iloc[i + input_length + gap:
+                           i + input_length + gap + output_length][[TARGET]].values)
+    return np.array(X), np.array(y)
 
 
 X_train, y_train = get_X_y_strides(fold_train, INPUT_LENGTH, OUTPUT_LENGTH, SEQUENCE_STRIDE)
@@ -515,8 +516,7 @@ mae_lstm = np.mean(np.abs(y_pred - y_test_original))
 print(f"The LSTM MAE on the test set is equal to {round(mae_lstm, 2)}")
 
 
-def init_baseline() -> tf.keras.Model:
-    """
+"""
     Construit et compile un modèle baseline naïf de type "dernière valeur observée".
 
     Ce modèle sert de borne inférieure de performance : si le LSTM ne fait pas mieux,
@@ -525,12 +525,13 @@ def init_baseline() -> tf.keras.Model:
     Returns:
         tf.keras.Model: Modèle Keras compilé retournant la dernière valeur observée de TARGET.
     """
-    model = models.Sequential()
-    model.add(layers.Lambda(lambda x: x[:, -1, 1, None]))
+fra_idx = list(df_selected.columns).index('FRA')
 
+def init_baseline(fra_idx):
+    model = models.Sequential()
+    model.add(layers.Lambda(lambda x: x[:, -1, fra_idx, None]))
     adam = optimizers.Adam(learning_rate=0.02)
     model.compile(loss='mse', optimizer=adam, metrics=["mae"])
-
     return model
 
 
@@ -601,7 +602,7 @@ def cross_validate_baseline_and_lstm():
             # val_loss est plus stable ; patience=2 stoppait trop tôt sur les folds volatils
             monitor="val_loss",
             mode="min",
-            patience=5,
+            patience=20,
             restore_best_weights=True
         )
 

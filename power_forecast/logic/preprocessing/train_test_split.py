@@ -62,8 +62,8 @@ def train_test_split_XGB_optimized(
     fold_train = df[df.index < objective_day].copy()
     fold_test  = df[(df.index >= objective_day) & (df.index < test_end)].copy()
 
-    print(f"fold_train: {len(fold_train)} rows  {fold_train.index[0]} → {fold_train.index[-1]}")
-    print(f"fold_test:  {len(fold_test)} rows   {fold_test.index[0]} → {fold_test.index[-1]}")
+    print(f"    fold_train: {len(fold_train)} rows  {fold_train.index[0]} → {fold_train.index[-1]}")
+    print(f"    fold_test:  {len(fold_test)} rows   {fold_test.index[0]} → {fold_test.index[-1]}")
 
     return fold_train, fold_test
 
