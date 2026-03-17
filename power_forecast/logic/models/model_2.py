@@ -29,6 +29,7 @@ print(columns_rnn)
 df = df_rnn
 
 from typing import Dict, List, Tuple, Sequence
+from sklearn.preprocessing import RobustScaler
 import numpy as np
 import tensorflow as tf
 import matplotlib.pyplot as plt
@@ -117,8 +118,8 @@ df_selected = df[selected_features + ['FRA']]
 print(f"\nShape après feature selection : {df_selected.shape}")
 
 def clean_target_outliers(df: pd.DataFrame, target: str,
-                          lower_pct: float = 0.01,
-                          upper_pct: float = 0.99) -> pd.DataFrame:
+                          lower_pct: float = 0.02,
+                          upper_pct: float = 0.98) -> pd.DataFrame:
     df = df.copy()  # évite le SettingWithCopyWarning
     low  = df[target].quantile(lower_pct)
     high = df[target].quantile(upper_pct)
@@ -214,7 +215,7 @@ class TargetScaler:
     """
 
     def __init__(self):
-        self.scaler = StandardScaler()
+        self.scaler = RobustScaler()  # ← remplace StandardScaler
         self._is_fitted = False
 
     def fit_transform(self, y: np.ndarray) -> np.ndarray:
