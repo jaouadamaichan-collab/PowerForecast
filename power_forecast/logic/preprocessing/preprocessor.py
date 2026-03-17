@@ -70,3 +70,5 @@ def preproc_histxgb_X_new(df: pd.DataFrame, column: pd.Series):
     X = standard_scaling_X_new(X, scaler)
 
     return X
+
+
