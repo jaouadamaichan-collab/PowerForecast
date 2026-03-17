@@ -582,11 +582,11 @@ def cross_validate_baseline_and_lstm():
         target_scaler   = TargetScaler()
         y_train_scaled  = target_scaler.fit_transform(y_train)
         y_test_scaled   = target_scaler.transform(y_test)
-        y_test_original = target_scaler.inverse_transform(y_test_scaled)
+        y_test_orig     = target_scaler.inverse_transform(y_test_scaled).squeeze()
 
         # 2a - [FIX-9] Baseline same-hour-7-days-ago
         baseline_model = init_baseline(fra_idx, SAME_HOUR_7D_IDX)
-        mae_baseline   = baseline_model.evaluate(X_test, y_test_original, verbose=0)[1]
+        mae_baseline = baseline_model.evaluate(X_test, y_test_orig, verbose=0)[1]
         list_of_mae_baseline_model.append(mae_baseline)
 
         print("-" * 50)
@@ -621,8 +621,8 @@ def cross_validate_baseline_and_lstm():
 
         # [FIX-5] Dénormalisation avant calcul de la MAE
         y_pred_scaled = model.predict(X_test, verbose=0)
-        y_pred        = target_scaler.inverse_transform(y_pred_scaled)
-        mae_lstm      = float(np.mean(np.abs(y_pred - y_test_original)))
+        y_pred        = target_scaler.inverse_transform(y_pred_scaled).squeeze()
+        mae_lstm      = float(np.mean(np.abs(y_pred - y_test_orig)))
         list_of_mae_recurrent_model.append(mae_lstm)
 
         print(f"MAE LSTM fold n°{fold_id + 1} = {round(mae_lstm, 2)}")
@@ -630,9 +630,11 @@ def cross_validate_baseline_and_lstm():
 
         # [FIX-10] Sanity check : MAE train pour détecter sur/sous-apprentissage
         y_pred_train_scaled = model.predict(X_train, verbose=0)
-        y_pred_train        = target_scaler.inverse_transform(y_pred_train_scaled)
-        y_train_original    = target_scaler.inverse_transform(y_train_scaled)
-        mae_train           = float(np.mean(np.abs(y_pred_train - y_train_original)))
+        y_pred_train        = target_scaler.inverse_transform(y_pred_train_scaled).squeeze()
+        y_train_orig        = target_scaler.inverse_transform(y_train_scaled).squeeze()
+        mae_train           = float(np.mean(np.abs(y_pred_train - y_train_orig)))
+
+
 
         print(f"  [Sanity] MAE TRAIN = {round(mae_train, 2)} | MAE TEST = {round(mae_lstm, 2)}", end="  ")
         if mae_train > mae_baseline * 0.9:
