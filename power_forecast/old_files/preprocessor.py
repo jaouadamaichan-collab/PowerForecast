@@ -1,8 +1,5 @@
 import pandas as pd
 pd.set_option('display.max_columns', None)
-from power_forecast.logic.get_data.download_api import replace_outliers_with_interpolation, align_start_to_column
-from power_forecast.logic.get_data.download_api import build_feature_dataframe
-from power_forecast.logic.preprocessing.scaler import standard_scaling, standard_scaling_X_new
 from power_forecast.logic.models.registry import save_scaler, load_scaler
 from power_forecast.params import *
 
@@ -54,7 +51,6 @@ def preproc_histxgb_train(df: pd.DataFrame, column: pd.Series, split_train_ratio
     return X_train, y_train, X_val, y_val, X_test, y_test
 
 
-
 def preproc_histxgb_X_new(df: pd.DataFrame, column: pd.Series):
 
     # # ── Step 1: build DataFrame──────────────────────────────────────────────
@@ -70,5 +66,17 @@ def preproc_histxgb_X_new(df: pd.DataFrame, column: pd.Series):
     X = standard_scaling_X_new(X, scaler)
 
     return X
+
+import pandas as pd
+from sklearn.preprocessing import StandardScaler
+
+def standard_scaling(df):
+    scaler = StandardScaler().set_output(transform='pandas')
+    df_scaled = scaler.fit_transform(df)
+    return df_scaled, scaler
+
+def standard_scaling_X_new(df, scaler):
+    df_scaled = scaler.transform(df)
+    return df_scaled
 
 

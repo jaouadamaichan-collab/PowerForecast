@@ -1,10 +1,10 @@
+from matplotlib import pyplot as plt
 import numpy as np
 import pandas as pd
 from pathlib import Path
 import joblib
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 from sklearn.preprocessing import StandardScaler
-from power_forecast.logic.get_data.build_dataframe import build_feature_dataframe
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.layers import LSTM, Dense, Dropout
 from tensorflow.keras.callbacks import EarlyStopping
@@ -24,233 +24,56 @@ from pathlib import Path
 from datetime import datetime
 import random
 from power_forecast.logic.get_data.build_dataframe import build_common_dataframe, add_features_XGB, add_features_RNN
-
-
+import numpy as np
+import pandas as pd
+from sklearn.preprocessing import StandardScaler
+from power_forecast.params import *
+from power_forecast.logic.get_data.build_dataframe import (
+    build_common_dataframe,
+    add_features_RNN,
+)
+from power_forecast.logic.preprocessing.train_test_split import (
+    train_test_split_general,
+    train_test_split_RNN_optimized,
+)
+from power_forecast.logic.preprocessing.split_X_y_standardize import (
+    get_X_y_vectorized_RNN,
+    get_Xi_yi_single_sequence,
+)
 from power_forecast.logic.utils.graphs import plot_predictions_rnn, plot_best_predictions
+#pd.set_option("display.max_columns", None)
 
 
-pd.set_option("display.max_columns", None)
+## PARAMÈTRES DE STRATÉGIE D'ENTRAÎNEMENT
+max_train_test_split = True
+
+objective_day = pd.Timestamp("2024-03-24", tz="UTC")
+
+cutoff_day = pd.Timestamp("2023-10-01", tz="UTC")
 
 
-#Inputs
-# ── DEFINE INPUT/OUTPUT PARAMETERS ──────────────────────────
+# Other inputs
+input_length = 14 * 24  # 3 weeks context fed to RNN
+stride_sequences = 24 * 3  # doit etre plus haute que output length
+prediction_horizon_days = 2
+country_price_objective = "France"
+prediction_length = prediction_horizon_days * 24  # predict 48h of target day
 
-TARGET_COL = "FRA"
+#Model hyperparam
+train_new_model = True
+patience_model = 10
+batch_size_model = 32
+epochs_model = 100
+version = "2"
 
-INPUT_LENGTH = 21 * 24  # 3 weeks context fed to RNN
-OUTPUT_LENGTH = 48  # predict 48h of target day
-HORIZON = 0  # skip 24h between input end and output
-# TRAIN_TEST_RATIO = 0.9  # 90% of sequences → train, 10% → test
-VAL_RATIO = 0.10  # 10% of train sequences → validation
-STRIDE_TRAIN = 48  # advance 2 day between train sequences
-STRIDE_TEST = 48  # advance 2 day between test sequences (deterministic)
+MODEL_DIR = Path("raw_data/pickle_files/models")
+MODEL_DIR.mkdir(parents=True, exist_ok=True)
 
-
-PATIENCE = 10
-BATCH_SIZE = 32
-EPOCHS = 100
-MODEL_NAME = "lstm_2"
-
-fit_scaler = True  # set to False to skip scaling (useful for debugging)
-resample_sequences = True
-train_new_model = True  # set to False to load existing model and skip training (must have been trained at least once with train_new_model=True to have the files)
-
-
-model_name = f"{MODEL_NAME}_{TARGET_COL}_in{INPUT_LENGTH}_out{OUTPUT_LENGTH}_h{HORIZON}"
-
-
-# Paths to save scaler, sequences, and model. Adjust as needed.
-SCALER_PATH = Path("raw_data/scalers/scaler.pkl")
-SAVE_SEQUENCES = Path("raw_data/sequences")
-SAVE_SEQUENCES.mkdir(parents=True, exist_ok=True)
-MODEL_PATH = Path(f"raw_data/models/{model_name}.keras")
-MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
-
-# ── Core: single sequence ──────────────────────────────────────────────────
-def get_Xi_yi(
-    fold: pd.DataFrame,
-    feature_cols: list,
-    target_col: str,
-    start_idx: int,
-    input_length: int = INPUT_LENGTH,
-    horizon: int = HORIZON,
-    output_length: int = OUTPUT_LENGTH,
-) -> tuple:
-    """
-    Extract one (X_i, y_i) pair from fold starting at start_idx.
-
-        [start_idx → +input_length)           → X_i  (input_length, n_features)
-        [+input_length → +horizon)             → skipped
-        [+input_length+horizon → +output_length) → y_i  (output_length,)
-    """
-    X_i = fold[feature_cols].iloc[start_idx : start_idx + input_length].values
-    y_start = start_idx + input_length + horizon
-    y_i = fold[target_col].iloc[y_start : y_start + output_length].values
-    return X_i, y_i
-
-
-# parallelized version to extract all sequences at once using numpy's sliding_window_view.
-def get_X_y(
-    fold: pd.DataFrame,
-    feature_cols: list,
-    target_col: str,
-    stride: int,
-    input_length: int = INPUT_LENGTH,
-    horizon: int = HORIZON,
-    output_length: int = OUTPUT_LENGTH,
-) -> tuple:
-    """
-    Fully vectorized sequence builder using sliding_window_view.
-    No Python for loop — all windows created at once.
-    """
-    total_span = input_length + horizon + output_length
-    if len(fold) < total_span:
-        raise ValueError(
-            f"Fold too short: {len(fold)} rows, need at least {total_span}."
-        )
-
-    X_all = fold[feature_cols].values  # (n_rows, n_features)
-    y_all = fold[target_col].values  # (n_rows,)
-
-    # all possible windows of size total_span, then subsample by stride
-    # shape → (n_windows, total_span, n_features)
-    X_wins = np.lib.stride_tricks.sliding_window_view(
-        X_all, window_shape=(total_span, X_all.shape[1])
-    )[
-        :, 0, :, :
-    ]  # squeeze extra dim → (n_windows, total_span, n_features)
-
-    # subsample by stride
-    X_wins = X_wins[::stride]  # (n_sequences, total_span, n_features)
-
-    # slice X and y out of each window
-    X = X_wins[:, :input_length, :]  # (n_seq, input_length, n_features)
-    y = X_wins[:, input_length + horizon :, :]  # temp, need target only
-
-    # y from target column directly
-    y_wins = np.lib.stride_tricks.sliding_window_view(y_all, total_span)[::stride]
-    y = y_wins[:, input_length + horizon :]  # (n_seq, output_length)
-
-    print(
-        f"  → {len(X)} sequences  "
-        f"(fold={len(fold)}h, stride={stride}h, span={total_span}h)"
-    )
-
-    return X, y
+model_name = f"{country_price_objective}_batch{batch_size_model}_input{input_length}_v_{version}"
+model_path  = MODEL_DIR / f"{model_name}.keras"
 
 
 
-def train_or_load_model_lstm(
-    train_new_model,
-    model,          # ← already initialized model passed in
-    X_tr,
-    y_tr,
-    X_val,
-    y_val,
-    EPOCHS,
-    BATCH_SIZE,
-    MODEL_PATH,
-    PATIENCE,
-):
-    if train_new_model:
-        early_stopping = EarlyStopping(
-            monitor="val_loss", patience=PATIENCE, restore_best_weights=True
-        )
-        history = model.fit(
-            X_tr,
-            y_tr,
-            validation_data=(X_val, y_val),
-            epochs=EPOCHS,
-            batch_size=BATCH_SIZE,
-            callbacks=[early_stopping],
-            verbose=1,
-        )
-        model.save(MODEL_PATH)
-        print(f"Trained and saved model to {MODEL_PATH}")
-    else:
-        print(f"Skipping training, using existing model at {MODEL_PATH}")
-        model = load_model(MODEL_PATH)
-        history = None
-
-    model.summary()
-    return model, history
-
-
-df_common = build_common_dataframe(
-    filepath="raw_data/all_countries.csv",
-    country_objective="France",
-    target_day_distance=2,
-    time_interval="h",
-    keep_only_neighbors=True,
-    add_meteo=True,
-    add_crisis=True,
-    add_entsoe=True,
-)
-
-df_rnn = add_features_RNN(
-    df=df_common,
-    country_objective="France",
-    target_day_distance=2,
-    add_future_time_features=True,
-    add_future_meteo=True,
-)
-
-columns_rnn = df_rnn.columns
-print(df_rnn.shape)
-print(columns_rnn)
-
-df = df_rnn.copy()
-
-print(f"\nFinal dataframe shape: {df.shape}")
-
-feature_cols = [c for c in df.columns]
-
-cutoff = pd.Timestamp("2023-10-01", tz="UTC")
-fold_train = df[df.index < cutoff].copy()
-fold_test = df[df.index >= cutoff - pd.Timedelta(hours=INPUT_LENGTH)].copy()
-
-print(
-    f"\nfold_train: {len(fold_train)} rows  {fold_train.index[0]} → {fold_train.index[-1]}"
-)
-print(
-    f"fold_test:  {len(fold_test)} rows   {fold_test.index[0]} → {fold_test.index[-1]}"
-)
-
-# Scale before sampling sequences, also the target column
-# It will be scaled back to real values at the end for evaluation and plotting.
-scaler = StandardScaler()
-fold_train[feature_cols] = scaler.fit_transform(fold_train[feature_cols])
-fold_test[feature_cols] = scaler.transform(fold_test[feature_cols])
-
-    
-if resample_sequences:
-    X_train, y_train = get_X_y(
-        fold_train,
-        feature_cols,
-        TARGET_COL,
-        STRIDE_TRAIN,
-        INPUT_LENGTH,
-        HORIZON,
-        OUTPUT_LENGTH,
-    )
-    np.save(SAVE_SEQUENCES / "X_train.npy", X_train)
-    np.save(SAVE_SEQUENCES / "y_train.npy", y_train)
-    print(f"Sampled and saved — X_train: {X_train.shape}")
-    print(f"Sampled and saved — y_train: {y_train.shape}")
-
-
-
-val_split = int(len(X_train) * (1 - VAL_RATIO))
-
-X_tr = X_train[:val_split]
-y_tr = y_train[:val_split]
-X_val = X_train[val_split:]
-y_val = y_train[val_split:]
-
-print(f"\nX_tr:  {X_tr.shape}   y_tr:  {y_tr.shape}")
-print(f"X_val: {X_val.shape}  y_val: {y_val.shape}")
-
-# Define new model structure
 
 def initialize_model_lstm(input_shape, output_length):
     model = Sequential(
@@ -278,79 +101,205 @@ def initialize_model_lstm(input_shape, output_length):
     model.summary()
     return model
 
-model_lstm = initialize_model_lstm(input_shape=X_tr.shape[1:], output_length=y_tr.shape[1])
 
-
-
-model_lstm, history_lstm = train_or_load_model_lstm(
-    train_new_model,
-    model_lstm,
-    X_tr,
-    y_tr,
-    X_val,
-    y_val,
-    EPOCHS,
-    BATCH_SIZE,
-    MODEL_PATH,
-    PATIENCE,
+df_common = build_common_dataframe(
+    filepath="raw_data/all_countries.csv",
+    country_objective=country_price_objective,
+    target_day_distance=prediction_horizon_days,
+    time_interval="h",
+    keep_only_neighbors=True,
+    add_meteo=True,
+    add_crisis=True,
+    add_entsoe=True,
 )
 
-# ---- Create X_test and y_test from fold_test (chronological scan) ----
-X_test, y_test = get_X_y(
-    fold_test,
-    feature_cols,
-    TARGET_COL,
-    STRIDE_TEST,
-    INPUT_LENGTH,
-    HORIZON,
-    OUTPUT_LENGTH,
+df = add_features_RNN(
+    df=df_common,
+    country_objective=country_price_objective,
+    target_day_distance=prediction_horizon_days,
+    add_future_time_features=True,
+    add_future_meteo=True,
 )
 
-# Evaluate model on test set
-loss, mae, mse = model_lstm.evaluate(X_test, y_test, verbose=1)
-
-print("Test Loss Normalized:", loss)
-print("Test MAE Normalized:", mae)
-print("Test MSE Normalized:", mse)
-
-target_idx = feature_cols.index(TARGET_COL)
-
-# inverse transform both
-y_test_real = y_test * scaler.scale_[target_idx] + scaler.mean_[target_idx]
-y_pred = model_lstm.predict(X_test)
-y_pred_real = y_pred * scaler.scale_[target_idx] + scaler.mean_[target_idx]
-
-# De-normalized metrics
-mae_real = mean_absolute_error(y_test_real, y_pred_real)
-mse_real = mean_squared_error(y_test_real, y_pred_real)
-rmse_real = np.sqrt(mse_real)
-
-print(f"MAE  (real scale): {mae_real:.2f} ")
-print(f"MSE  (real scale): {mse_real:.2f} ")
-print(f"RMSE (real scale): {rmse_real:.2f} ")
-
-# print sequence by sequence, hour by hour
-# reconstruct start indices the same way get_X_y does
-total_span = INPUT_LENGTH + HORIZON + OUTPUT_LENGTH
-max_start = len(fold_test) - total_span
-starts = list(range(0, max_start + 1, STRIDE_TEST))
-
-plot_best_predictions(y_test_real, y_pred_real, TARGET_COL)
-#scp user@your-vm-ip:/path/to/PowerForecast/outputs/plots/best_predictions.png ~/Desktop/
+columns_rnn = df.columns
+print(f"      Shape of all data{df.shape}")
 
 
-# print sequence by sequence, hour by hour
-for seq_idx in range(len(y_test_real) - 3, len(y_test_real)):
-    start_idx = starts[seq_idx]
-    y_start = start_idx + INPUT_LENGTH + HORIZON
+# if max_train_test_split = True il train jusqu'a derniere moment possible basè sur objective_day
+if max_train_test_split:
+    # RNN
+    fold_train_rnn, fold_test_rnn = train_test_split_RNN_optimized(
+        df=df,
+        objective_day=objective_day,
+        number_days_to_predict=prediction_horizon_days,
+        input_length=input_length,  # 168h lookback
+    )
+if not max_train_test_split:
+    # RNN
+    fold_train_rnn, fold_test_rnn = train_test_split_general(df=df, cutoff=cutoff_day)
 
-    print(f"\n── Sequence {seq_idx} ──────────────────────────────")
-    for hour in range(OUTPUT_LENGTH):
-        timestamp = fold_test.index[y_start + hour]
-        real = y_test_real[seq_idx, hour]
-        predicted = y_pred_real[seq_idx, hour]
-        print(
-            f"  {timestamp} | Real: {real:>8.2f} EUR/MWh | Predicted: {predicted:>8.2f} EUR/MWh"
+
+scaler = StandardScaler()
+
+# ── Train ──────────────────────────────────────────────────────────────────
+X_train, y_train = get_X_y_vectorized_RNN(
+    fold=fold_train_rnn,
+    feature_cols=fold_train_rnn.columns,
+    country_objective=country_price_objective,
+    stride=stride_sequences,
+    input_length=input_length,
+    output_length=prediction_length,
+    scaler=scaler,
+    fit_scaler=True,
+)
+
+# ── Test ───────────────────────────────────────────────────────────────────
+X_new, y_true = get_X_y_vectorized_RNN(
+    fold=fold_test_rnn,
+    feature_cols=fold_test_rnn.columns,
+    country_objective=country_price_objective,
+    stride=stride_sequences,
+    input_length=input_length,
+    output_length=prediction_length,
+    scaler=scaler,
+    fit_scaler=False,
+)
+
+# # ── X_new : dernière séquence du fold_test pour prédiction ────────────────
+# X_new = X_test[-1:]  # (1, input_length, n_features) -> deja bon dimension
+
+if max_train_test_split:
+    print("📐 Shapes finales :")
+    print(f"    X_train: {X_train.shape} → (n_seq, input_length, n_features)")
+    print(f"    y_train: {y_train.shape} → (n_seq, output_length)")
+    print(f"    X_new: {X_new.shape} → (1, input_length, n_features)")
+    print(f"    y_true: {y_true.shape}→ (n_seq, output_length)")
+
+# ── Validation : split chronologique SUR LES SÉQUENCES (pas sur le fold brut)
+if not max_train_test_split:
+    val_ratio = 0.2
+    split_idx = int(len(X_train) * (1 - val_ratio))
+
+    X_val = X_train[split_idx:]  # séquences val → suivent chronologiquement train
+    y_val = y_train[split_idx:]
+    X_train = X_train[:split_idx]  # on réduit X_train en conséquence
+    y_train = y_train[:split_idx]
+    print("📐 Shapes finales :")
+    print(f"    X_train: {X_train.shape} → (n_seq, input_length, n_features)")
+    print(f"    y_train: {y_train.shape} → (n_seq, output_length)")
+    print(f"    X_val: {X_val.shape} → (n_seq, input_length, n_features)")
+    print(f"    y_val: {y_val.shape} → (n_seq, output_length)")
+    print(f"    X_test: {X_new.shape} → (1, input_length, n_features)")
+    print(f"    y_test: {y_true.shape}→ (n_seq, output_length)")
+
+input_shape=X_train.shape[1:]
+output_length=y_train.shape[1]
+
+model_lstm = initialize_model_lstm(input_shape=input_shape, output_length=output_length)
+
+early_stopping = EarlyStopping(
+    monitor="val_loss", patience=patience_model, restore_best_weights=True
+)
+
+force_retrain = False  # ← passe à True pour ignorer le cache
+if max_train_test_split:
+    if model_path.exists() and not force_retrain:
+        print(f"✅ Modèle existant chargé : {model_path}")
+        model_lstm = load_model(model_path)
+
+    else:
+        print(f"🏋️ Aucun modèle trouvé — entraînement en cours...")
+        history = model_lstm.fit(
+            X_train,
+            y_train,
+            epochs=epochs_model,
+            batch_size=batch_size_model,
+            callbacks=[early_stopping],
+            verbose=1,
         )
+        model_lstm.save(model_path)
+        print(f"✅ Modèle sauvegardé : {model_path}")
         
-        
+if not max_train_test_split:
+    if model_path.exists() and not force_retrain:
+        print(f"✅ Modèle existant chargé : {model_path}")
+        model_lstm = load_model(model_path)
+
+    else:
+        print(f"🏋️ Aucun modèle trouvé — entraînement avec validation en cours...")
+        history = model_lstm.fit(
+            X_train,
+            y_train,
+            validation_data=(X_val, y_val),
+            epochs=epochs_model,
+            batch_size=batch_size_model,
+            callbacks=[early_stopping],
+            verbose=1,
+        )
+        model_lstm.save(model_path)
+        print(f"✅ Modèle sauvegardé : {model_path}")
+
+
+if max_train_test_split:
+    y_pred_rnn  = model_lstm.predict(X_new, verbose=0).flatten()
+    y_true_flat = y_true.flatten()
+
+    time_index  = pd.date_range(
+        start   = objective_day,
+        periods = output_length,
+        freq    = "h",
+        tz      = "UTC"
+    )
+    y_true_plot = y_true_flat
+    y_pred_plot = y_pred_rnn
+
+if not max_train_test_split:
+    print("📊 Évaluation sur le jeu de test :")
+    results = model_lstm.evaluate(X_test, y_true, verbose=1)
+    print(f"   Huber Loss : {results[0]:.4f}")
+    print(f"   MAE        : {results[1]:.4f}")
+    print(f"   MSE        : {results[2]:.4f}")
+
+    y_pred_rnn  = model_lstm.predict(X_test, verbose=0).flatten()
+    y_true_flat = y_true.flatten()
+
+    time_index  = pd.date_range(
+        start   = fold_test.index[input_length],
+        periods = output_length,
+        freq    = "h",
+        tz      = "UTC"
+    )
+    y_true_plot = y_true[0]                    # première séquence uniquement
+    y_pred_plot = y_pred_rnn[:output_length]   # idem
+
+# ── Métriques (toutes séquences) ──────────────────────────────────────────
+mae  = mean_absolute_error(y_true_flat, y_pred_rnn)
+mse  = mean_squared_error(y_true_flat, y_pred_rnn)
+rmse = np.sqrt(mse)
+mape = np.mean(np.abs((y_true_flat - y_pred_rnn) / (y_true_flat + 1e-8))) * 100
+
+print("\n📐 Métriques finales :")
+print(f"   MAE  : {mae:.4f}")
+print(f"   MSE  : {mse:.4f}")
+print(f"   RMSE : {rmse:.4f}")
+print(f"   MAPE : {mape:.2f} %")
+
+# ── Plot (première séquence dans else, objective_day dans if) ─────────────
+fig, ax = plt.subplots(figsize=(14, 5))
+
+ax.plot(time_index, y_true_plot, label="🔵 y_true",     color="#4C9BE8", linewidth=2)
+ax.plot(time_index, y_pred_plot, label="🟠 y_pred RNN", color="#F4845F", linewidth=2, linestyle="--")
+ax.fill_between(time_index, y_true_plot, y_pred_plot, alpha=0.08, color="#A78BFA")
+
+ax.set_title(
+    f"Prédiction RNN — {country_price_objective}  |  "
+    f"MAE {mae:.2f}  •  RMSE {rmse:.2f}  •  MAPE {mape:.1f}%",
+    fontsize=13, fontweight="bold", pad=14
+)
+ax.set_xlabel("Temps (UTC)", fontsize=11)
+ax.set_ylabel("Prix (€/MWh)", fontsize=11)
+ax.legend(fontsize=11)
+ax.grid(True, linestyle="--", alpha=0.4)
+fig.autofmt_xdate()
+plt.tight_layout()
+plt.show()

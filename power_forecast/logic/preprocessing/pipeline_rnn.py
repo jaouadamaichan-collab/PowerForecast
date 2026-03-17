@@ -140,3 +140,5 @@ if not max_train_test_split:
 
 input_shape=X_train.shape[1:]
 output_length=y_train.shape[1]
+
+
