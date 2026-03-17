@@ -1,0 +1,96 @@
+import numpy as np
+import pandas as pd
+from power_forecast.params import *
+from power_forecast.logic.get_data.build_dataframe import (
+    build_common_dataframe,
+    add_features_XGB,
+    add_features_RNN,
+)
+from power_forecast.logic.preprocessing.train_test_split import (
+    train_test_split_general,
+    train_test_split_RNN_optimized,
+    train_test_split_XGB_optimized,
+)
+
+
+## PARAMÈTRES DE STRATÉGIE D'ENTRAÎNEMENT
+## ==============================================================
+max_train_test_split = True
+## max_train_test_split (bool) :
+##   - True  → Entraînement sur le maximum de données disponibles.
+##              Le split train/test est ajusté automatiquement selon
+##              l'objective_day. Aucun jeu de validation (X_val, y_val)
+##              ne sera créé. Le modèle utilisera l'objective_day comme
+##              X_new pour la prédiction finale, et les métriques seront
+##              calculées en comparant y_true vs y_pred_xgb.
+##
+##   - False → Split train/test classique basé sur le cutoff_day
+##              (01-01-2023 recommandé). Un jeu de validation
+##              (X_val, y_val) sera également créé plus tard dans le code.
+objective_day = pd.Timestamp("2024-03-20", tz="UTC")
+## objective_day (Timestamp) :
+##   Jour cible de prédiction. Utilisé comme X_new lorsque
+##   max_train_test_split = True.
+
+cutoff_day = pd.Timestamp("2023-10-01", tz="UTC")
+## cutoff_day (Timestamp) :
+##   Date de coupure pour le split train/test classique. Utilisé
+##   uniquement lorsque max_train_test_split = False.
+## ==============================================================
+
+#Other inputs
+prediction_horizon_days = 2
+country_price_objective = 'France'
+
+df_common = build_common_dataframe(
+    filepath="raw_data/all_countries.csv",
+    country_objective=country_price_objective,
+    target_day_distance=prediction_horizon_days,
+    time_interval="h",
+    keep_only_neighbors=True,
+    add_meteo=True,
+    add_crisis=True,
+    add_entsoe=True,
+)
+
+df = add_features_RNN(
+    df=df_common,
+    country_objective=country_price_objective,
+    target_day_distance=prediction_horizon_days,
+    add_future_time_features=True,
+    add_future_meteo=True,
+)
+
+columns_rnn = df.columns
+print(df.shape)
+
+
+# if max_train_test_split = True il train jusqu'a derniere moment possible basè sur objective_day
+if max_train_test_split:
+    # RNN
+    fold_train_rnn, fold_test_rnn = train_test_split_RNN_optimized(
+        df=df,
+        objective_day=objective_day,
+        number_days_to_predict=prediction_horizon_days,
+        input_length=INPUT_LENGTH,  # 168h lookback
+    )
+else:
+    # RNN
+    fold_train_rnn, fold_test_rnn = train_test_split_general(
+        df=df, cutoff=cutoff_day
+    )
+
+
+        
+# # XGB 
+# split X and y in both train and test
+# standardize X_train and X_test with fit_transform and transform
+# create X_train and X_val
+
+
+# # RNN 
+# split X and y in both train and test
+# standardize X_train and X_test with fit_transform and transform
+# create X_train and X_val
+
+# Remember to denormalize preidciton at the end
