@@ -1,4 +1,3 @@
-import os
 from pathlib import Path
 
 # ── Paramètres globaux ───────────────────────────────────────────────────────────────
@@ -332,10 +331,17 @@ COUNTRY_HOLIDAY_MAP = {
 }
 
 
-LOCAL_DATA_PATH = os.path.join(os.path.expanduser("~"), ".lewagon", "mlops", "data")
-LOCAL_REGISTRY_PATH = os.path.join(
-    os.path.expanduser("~"), ".lewagon", "mlops", "models"
-)
+_DONNEES_DIR = Path(__file__).parent / "donnees"
+
+LOCAL_DATA_PATH_MODELS = str(_DONNEES_DIR / "saved_models")
+LOCAL_REGISTRY_PATH_MODELS = str(_DONNEES_DIR / "saved_models")
+
+LOCAL_DATA_PATH_DF = str(_DONNEES_DIR / "df")
+LOCAL_REGISTRY_PATH_DF = str(_DONNEES_DIR / "df")
+
+LOCAL_DATA_PATH_SC = str(_DONNEES_DIR / "scaler")
+LOCAL_REGISTRY_PATH_SC = str(_DONNEES_DIR / "scaler")
+
 
 
 PICKLE_DIR = Path("raw_data/pickle_files")

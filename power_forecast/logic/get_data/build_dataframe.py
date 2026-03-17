@@ -15,7 +15,7 @@ from power_forecast.logic.get_data.time_features import (
 from power_forecast.logic.get_data.meteo_features import get_meteo
 from power_forecast.logic.get_data.entsoe_features import get_gen_load_forecast
 from power_forecast.params import *
-from power_forecast.logic.utils.others import load_df, save_df
+from power_forecast.logic.models.registry import load_df, save_df
 
 
 
@@ -425,4 +425,3 @@ def add_features_RNN(
         )
 
     return df
-

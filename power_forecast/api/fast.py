@@ -1,9 +1,8 @@
 import pandas as pd
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from power_forecast.logic.preprocessing.preprocessor import preproc_histxgb_X_new
-from power_forecast.logic.models.registry import load_model_ml
-from power_forecast.logic.utils.others import load_df, load_X_test_gcs
+# from power_forecast.logic.preprocessing.preprocessor import preproc_histxgb_X_new
+from power_forecast.logic.models.registry import load_model_ml, load_df
 from power_forecast.logic.utils.upload_run import upload_run
 
 app = FastAPI()
@@ -20,7 +19,7 @@ app.add_middleware(
 app.state.model = load_model_ml()
 
 try:
-    app.state.df_cache = load_X_test_gcs()
+    app.state.df_cache = load_df('X_test')
     print("✅ Feature DataFrame chargé depuis le cache pickle")
 except Exception as e:
     print(f"⚠️  Impossible de charger le cache pickle : {e}")
@@ -31,7 +30,7 @@ except Exception as e:
 
 @app.get("/")
 def root():
-    return {'status': 'connected', 'model': 'HistXGB_v1'}
+    return {'status': 'connected', 'model': 'top_model'}
 
 
 @app.post("/predict")
@@ -44,8 +43,7 @@ def predict(data: dict):
         raise HTTPException(status_code=503, detail="Modèle non chargé")
 
     X_new = pd.DataFrame([data])
-    X_preproc = preproc_histxgb_X_new(X_new, column='FRA')
-    y_pred = app.state.model.predict(X_preproc)
+    y_pred = app.state.model.predict(X_new)
 
     return {
         'prix_predit': float(y_pred[0]),
@@ -105,8 +103,7 @@ def predict_from_cache(
 
     # Extrait toutes les lignes d'un coup et prédit en batch
     X_new = df.loc[timestamps]
-    X_preproc = preproc_histxgb_X_new(X_new, column='FRA')
-    y_pred = app.state.model.predict(X_preproc)
+    y_pred = app.state.model.predict(X_new)
 
     predictions = [
         {'date': str(ts), 'prix_predit': float(price)}

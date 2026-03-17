@@ -2,7 +2,6 @@ import pandas as pd
 from sklearn.ensemble import HistGradientBoostingRegressor
 from sklearn.metrics import root_mean_squared_error, mean_squared_error, mean_absolute_error
 from sklearn.model_selection import cross_validate
-from power_forecast.logic.models.registry import save_model_ml
 
 
 def init_fit_histxgb(X: pd.DataFrame, y: pd.Series):
