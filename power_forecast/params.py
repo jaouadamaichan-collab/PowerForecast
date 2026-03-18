@@ -15,7 +15,7 @@ RNN_y_TRUE_DATA_DIR = Path("power_forecast/donnees/y_true_rnn")
 RNN_y_TRUE_DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 
-INPUT_LENGTH = 14 * 24  # 2 weeks context fed to RNN
+INPUT_LENGTH = 21 * 24  # 3 weeks context fed to RNN
 INPUT_LENGTH_RNN  = INPUT_LENGTH
 OUTPUT_LENGTH = 48  # predict 24h of target day
 HORIZON = 0  # skip 24h between input end and output
