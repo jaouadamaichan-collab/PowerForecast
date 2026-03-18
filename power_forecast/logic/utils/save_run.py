@@ -28,13 +28,12 @@ def _make_serializable(obj):
 
 
 def _is_keras_model(model):
-    """
-    Détecte si le modèle est un modèle Keras/TensorFlow.
-    Sans importer TensorFlow — évite les conflits JAX/numpy.
-    """
-    model_type = type(model).__name__
-    keras_types = {"Sequential", "Functional", "Model"}
-    return model_type in keras_types or "keras" in str(type(model)).lower()
+    """Détecte si le modèle est un modèle Keras/TensorFlow."""
+    try:
+        import tensorflow as tf
+        return isinstance(model, tf.keras.Model)
+    except ImportError:
+        return False
 
 
 def save_run(results, author=None, note=None):
