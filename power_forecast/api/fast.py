@@ -22,9 +22,9 @@ app.add_middleware(
 # ── Config modèles ─────────────────────────────────────────────────────────
 MODELS_DIR = Path("power_forecast/donnees/saved_models")
 
-XGB_MODEL_NAME    = "model_xgb_67f.pkl"
+XGB_MODEL_NAME    = "model_xgb_130f"
 XGB_MODEL_PATH    = MODELS_DIR / XGB_MODEL_NAME
-XGB_N_FEATURES    = 67
+XGB_N_FEATURES    = 130
 
 RNN_MODEL_NAME    = "model_336h_57f.keras"
 RNN_MODEL_PATH    = MODELS_DIR / RNN_MODEL_NAME

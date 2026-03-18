@@ -37,3 +37,21 @@ def evaluate_model(model, X_train, y_train, X_val, y_val, X_test, y_test):
     "Set": ["Train", "Validation", "Test"],
     "MAE": [mae_train, mae_val, mae_test],
     "RMSE": [rmse_train, rmse_val, rmse_test] })
+
+def evaluate_model_train(model, X_train, y_train):
+    #evaluating model on train
+    cv_results = cross_validate(model,
+                            X_train,
+                            y_train,
+                            cv=10,
+                            scoring=['neg_mean_absolute_error', 'neg_root_mean_squared_error'],
+                            n_jobs=-1)
+
+    mae_train = round(abs(cv_results['test_neg_mean_absolute_error'].mean()),2)
+    rmse_train = round(abs(cv_results['test_neg_root_mean_squared_error'].mean()),2)
+
+    return pd.DataFrame({
+    "Set": ["Train"],
+    "MAE": [mae_train],
+    "RMSE": [rmse_train]
+    })

@@ -132,8 +132,8 @@ def save_rnn_data(
 # ──────────────────────────────────────────────────────────────────────────────
 
 def save_xgb_data(
-    X_new: np.ndarray,
-    y_true: np.ndarray,
+    X_new: pd.DataFrame,
+    y_true: pd.Series,
     objective_day: pd.Timestamp,
     base_dir: Path = Path("power_forecast/donnees"),
 ) -> tuple[Path, Path]:
@@ -315,13 +315,13 @@ def save_df_topickle(df):
 
 def save_df(df, name):
     os.makedirs(LOCAL_REGISTRY_PATH_DF, exist_ok=True)
-    
+
     start_date = df.index.min().strftime("%Y-%m-%d")
     end_date = df.index.max().strftime("%Y-%m-%d")
-    
+
     filename = f"{name}_{start_date}_to_{end_date}.pkl"
     path = os.path.join(LOCAL_REGISTRY_PATH_DF, filename)
-    
+
     df.to_pickle(path)
     print(f"✅ DataFrame saved locally: {path}")
 
