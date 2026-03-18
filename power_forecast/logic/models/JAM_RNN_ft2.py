@@ -1,62 +1,7 @@
-"""
-Power Forecast - Modèle LSTM pour la Prévision de Consommation Électrique
-==========================================================================
-Ce notebook entraîne et évalue un réseau de neurones récurrent LSTM (Long Short-Term Memory)
-pour prédire la consommation électrique de la France (FRA), à partir d'un jeu de données
-multi-pays.
-
-Le pipeline comprend :
-    - Découpage de la série temporelle en folds
-    - Séparation train/test de chaque fold
-    - Génération de séquences (aléatoire et par pas fixe)
-    - Entraînement du modèle LSTM avec arrêt anticipé (early stopping)
-    - Comparaison avec un modèle baseline "dernière valeur observée"
-    - Validation croisée sur l'ensemble des folds
-
-CORRECTIFS APPLIQUÉS :
-    [FIX-1] Gradient clipping (clipnorm=1.0) sur Adam → élimine les explosions de gradient
-    [FIX-2] Régularisation L1L2 réduite (0.05→0.01) → moins de sur-contrainte
-    [FIX-3] patience=5 + monitor='val_loss' en cross-validation → meilleure convergence
-    [FIX-4] Feature rolling z-score sur la target → détection du régime de crise
-    [FIX-5] Normalisation séparée de y_train/y_test → stabilise la loss sur folds extrêmes
-"""
-
-import pandas as pd
-from power_forecast.logic.get_data.build_dataframe import build_common_dataframe, add_features_RNN
-# %load_ext autoreload
-# %autoreload 2
-pd.set_option('display.max_columns', None)
-
-# Chargement du DataFrame de features à partir d'un CSV multi-pays.
-# `load_from_pickle=False` force un rechargement complet plutôt que d'utiliser un cache.
-
-df_common = build_common_dataframe(
-    filepath="raw_data/all_countries.csv",
-    country_objective="France",
-    target_day_distance=2,
-    time_interval="h",
-    keep_only_neighbors=True,
-    add_meteo=True,
-    add_crisis=True,
-    add_entsoe=True,
-)
-
-df_rnn = add_features_RNN(
-    df=df_common,
-    country_objective="France",
-    target_day_distance=2,
-    add_future_time_features=True,
-    add_future_meteo=True,
-)
-
-columns_rnn = df_rnn.columns
-print(df_rnn.shape)
-print(columns_rnn)
-
-df= df_rnn
-
-from typing import Dict, List, Tuple, Sequence
 import numpy as np
+import pandas as pd
+from power_forecast.logic.utils.graphs import plot_history, plot_history_loss_is_mae
+from typing import Dict, List, Tuple, Sequence
 import tensorflow as tf
 import matplotlib.pyplot as plt
 from sklearn.preprocessing import StandardScaler
@@ -66,307 +11,170 @@ from tensorflow.keras.regularizers import L1L2
 from tensorflow.keras.layers import Normalization
 from keras.callbacks import EarlyStopping
 from keras.layers import Lambda
-
-
-# ================================================================= #
-# [FIX-4] FEATURE : ROLLING Z-SCORE SUR LA TARGET                  #
-# ================================================================= #
-# Ajoute un z-score glissant (fenêtre 7 jours = 168h) sur la colonne
-# TARGET. Cette feature indique au modèle si le prix actuel est dans un
-# régime "normal" ou "extrême" (crise énergétique, pic de demande...).
-# Un |z| > 2 signale un régime hors-distribution que le LSTM doit traiter
-# différemment — sans cette information, il extrapole aveuglément.
-
-def add_rolling_zscore(df: pd.DataFrame, target: str, window: int = 168) -> pd.DataFrame:
-    """
-    Ajoute une feature de z-score glissant sur la colonne cible.
-
-    Le z-score est calculé sur une fenêtre mobile de `window` pas de temps.
-    Il mesure l'écart de la valeur courante par rapport à la distribution
-    locale récente, permettant au modèle de détecter les régimes extrêmes.
-
-    Args:
-        df (pd.DataFrame): Le DataFrame complet de la série temporelle.
-        target (str): Nom de la colonne cible (ex. 'FRA').
-        window (int): Taille de la fenêtre glissante en pas de temps (défaut : 168h = 7 jours).
-
-    Returns:
-        pd.DataFrame: Le DataFrame avec une colonne supplémentaire `{target}_zscore`.
-    """
-    rolling_mean = df[target].rolling(window=window, min_periods=1).mean()
-    rolling_std  = df[target].rolling(window=window, min_periods=1).std().replace(0, 1)
-    df[f'{target}_zscore'] = (df[target] - rolling_mean) / rolling_std
-    df[f'{target}_zscore'] = df[f'{target}_zscore'].fillna(0)
-    return df
-
-
-df = add_rolling_zscore(df, target='FRA', window=168)
-
-
-# ================================================================= #
-# 2. FEATURE SELECTION PAR LASSO                                    #
-# ================================================================= #
-
-def lasso_feature_selection(df: pd.DataFrame, target: str,
-                             alpha: float = 0.01) -> List[str]:
-    features = [c for c in df.columns if c != target]
-    X = df[features].values
-    y = df[target].values
-
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
-
-    lasso = Lasso(alpha=alpha, max_iter=10000)
-    lasso.fit(X_scaled, y)
-
-    selected = [features[i] for i, coef in enumerate(lasso.coef_) if coef != 0]
-    print(f"\nLasso feature selection (alpha={alpha}) :")
-    print(f"  {len(features)} features initiales → {len(selected)} features sélectionnées")
-    print(f"  Features conservées : {selected}")
-    return selected
-
-
-selected_features = lasso_feature_selection(df, target='FRA', alpha=0.01)
-
-# Note : FRA_zscore est conservée si Lasso la juge pertinente.
-# Si elle est éliminée, on la force manuellement car elle est structurellement utile.
-if 'FRA_zscore' not in selected_features:
-    selected_features.append('FRA_zscore')
-    print("[FIX-4] 'FRA_zscore' forcée dans les features (non sélectionnée par Lasso).")
-
-df_selected = df[selected_features + ['FRA']]
-print(f"\nShape après feature selection : {df_selected.shape}")
-
-
-# --------------------------------------------------- #
-# Configuration globale du jeu de données             #
-# --------------------------------------------------- #
-
-TARGET          = 'FRA'
-N_FEATURES      = df_selected.shape[1]
-
-FOLD_LENGTH      = 24 * 365 * 4
-FOLD_STRIDE      = 24 * 182
-TRAIN_TEST_RATIO = 0.9
-
-INPUT_LENGTH    = 24 * 7
-OUTPUT_LENGTH   = 1
-SEQUENCE_STRIDE = 24
-DAY_AHEAD_GAP   = 0
-
-print(f"N_FEATURES = {N_FEATURES} | INPUT_LENGTH = {INPUT_LENGTH}h = {INPUT_LENGTH//24} jours")
-print(f"FOLD_LENGTH = {FOLD_LENGTH}h = {FOLD_LENGTH//24/365:.1f} ans")
-
-
-def get_folds(
-    df: pd.DataFrame,
-    fold_length: int,
-    fold_stride: int) -> List[pd.DataFrame]:
-    """
-    Parcourt un DataFrame de série temporelle pour en extraire des folds de longueur fixe.
-
-    Chaque fold est une fenêtre contiguë de `fold_length` lignes extraite du DataFrame.
-    La fenêtre avance de `fold_stride` lignes à chaque itération.
-    Toute fenêtre qui dépasserait la fin du DataFrame est ignorée.
-
-    Args:
-        df (pd.DataFrame): Le DataFrame complet de la série temporelle, de forme (n_pas, n_features).
-        fold_length (int): Nombre de lignes (pas de temps) dans chaque fold.
-        fold_stride (int): Nombre de lignes à avancer entre deux folds consécutifs.
-
-    Returns:
-        List[pd.DataFrame]: Liste de DataFrames, chacun représentant un fold.
-    """
-    folds = []
-    for idx in range(0, len(df), fold_stride):
-        if (idx + fold_length) > len(df):
-            break
-        fold = df.iloc[idx:idx + fold_length, :]
-        folds.append(fold)
-    return folds
-
-
-folds = get_folds(df_selected, FOLD_LENGTH, FOLD_STRIDE)
-
-print(f'The function generated {len(folds)} folds.')
-print(f'Each fold has a shape equal to {folds[0].shape}.')
-
-fold = folds[0]
-
-
-def train_test_split(fold: pd.DataFrame,
-                     train_test_ratio: float,
-                     input_length: int) -> Tuple[pd.DataFrame, pd.DataFrame]:
-    """
-    Divise un fold en un ensemble d'entraînement et un ensemble de test.
-
-    L'ensemble d'entraînement contient les premières `train_test_ratio` lignes du fold.
-    L'ensemble de test commence `input_length` lignes avant la fin de l'entraînement,
-    afin que le modèle dispose d'une fenêtre d'entrée complète dès sa première prédiction.
-    Ce léger chevauchement est intentionnel et ne constitue pas une fuite de données.
-
-    Args:
-        fold (pd.DataFrame): Un fold de pas de temps, de forme (fold_length, n_features).
-        train_test_ratio (float): Proportion de lignes allouées à l'entraînement (ex : 0.7).
-        input_length (int): Nombre de pas de temps nécessaires pour former une séquence X_i.
-
-    Returns:
-        Tuple[pd.DataFrame, pd.DataFrame]: (fold_train, fold_test)
-    """
-    last_train_idx = round(train_test_ratio * len(fold))
-    fold_train = fold.iloc[0:last_train_idx, :]
-
-    first_test_idx = last_train_idx - input_length
-    fold_test = fold.iloc[first_test_idx:, :]
-
-    return (fold_train, fold_test)
-
-
-(fold_train, fold_test) = train_test_split(fold, TRAIN_TEST_RATIO, INPUT_LENGTH)
-
-print(f'N_FEATURES = {N_FEATURES}')
-print(f'INPUT_LENGTH = {INPUT_LENGTH} timesteps = {int(INPUT_LENGTH)/24} days')
-
-
-
-# ================================================================= #
-# [FIX-5] NORMALISATION SÉPARÉE DE Y                               #
-# ================================================================= #
-# Sur les folds de crise (folds 20+), la target FRA explose à des
-# valeurs 5-10x supérieures aux périodes normales. Cela déforme la MSE
-# et rend l'entraînement instable. On normalise y séparément avec un
-# StandardScaler fitté uniquement sur y_train, puis on dénormalise
-# les prédictions pour retrouver les unités originales.
-
-class TargetScaler:
-    """
-    Normalise et dénormalise la target (y) indépendamment des features (X).
-
-    Nécessaire quand la distribution de la target varie fortement entre
-    les folds (ex. crise énergétique). Fitter sur y_train uniquement
-    pour éviter toute fuite de données depuis y_test.
-    """
-
-    def __init__(self):
-        self.scaler = StandardScaler()
-        self._is_fitted = False
-
-    def fit_transform(self, y: np.ndarray) -> np.ndarray:
-        """Fitte le scaler sur y et retourne y normalisé."""
-        shape = y.shape
-        y_flat = y.reshape(-1, 1)
-        y_scaled = self.scaler.fit_transform(y_flat)
-        self._is_fitted = True
-        return y_scaled.reshape(shape)
-
-    def transform(self, y: np.ndarray) -> np.ndarray:
-        """Normalise y sans re-fitter (utilise les stats de fit_transform)."""
-        assert self._is_fitted, "Appeler fit_transform avant transform."
-        shape = y.shape
-        return self.scaler.transform(y.reshape(-1, 1)).reshape(shape)
-
-    def inverse_transform(self, y_scaled: np.ndarray) -> np.ndarray:
-        """Dénormalise y pour retrouver les unités d'origine."""
-        assert self._is_fitted, "Appeler fit_transform avant inverse_transform."
-        shape = y_scaled.shape
-        return self.scaler.inverse_transform(y_scaled.reshape(-1, 1)).reshape(shape)
-
-
-def get_Xi_yi(
-    fold: pd.DataFrame,
-    input_length: int,
-    output_length: int) -> Tuple[pd.DataFrame, pd.DataFrame]:
-    """
-    Extrait une paire (entrée, cible) depuis un fold en choisissant un point de départ aléatoire.
-
-    La cible `y_i` est positionnée 24 heures après la fin de `X_i`, simulant un
-    scénario de prévision à horizon J+1 (day-ahead forecasting).
-
-    Args:
-        fold (pd.DataFrame): Un seul fold de la série temporelle.
-        input_length (int): Nombre de pas de temps dans la séquence d'entrée X_i.
-        output_length (int): Nombre de pas de temps à prédire (y_i).
-
-    Returns:
-        Tuple[pd.DataFrame, pd.DataFrame]: (X_i, y_i)
-    """
-    first_possible_start = 0
-    last_possible_start = len(fold) - (input_length + output_length + 24) + 1
-    random_start = np.random.randint(first_possible_start, last_possible_start)
-
-    X_i = fold.iloc[random_start:random_start + input_length]
-    y_i = fold.iloc[random_start + input_length + 24:
-                    random_start + input_length + output_length + 24][[TARGET]]
-
-    return (X_i, y_i)
-
-
-def get_X_y(
-    fold: pd.DataFrame,
-    number_of_sequences: int,
-    input_length: int,
-    output_length: int) -> Tuple[np.ndarray, np.ndarray]:
-    """
-    Construit un jeu de données en échantillonnant aléatoirement des paires (X_i, y_i) dans un fold.
-
-    Args:
-        fold (pd.DataFrame): Le fold depuis lequel échantillonner.
-        number_of_sequences (int): Nombre total de paires (X, y) à générer.
-        input_length (int): Longueur de chaque séquence d'entrée.
-        output_length (int): Longueur de chaque séquence cible.
-
-    Returns:
-        Tuple[np.ndarray, np.ndarray]: (X, y) de formes
-            (number_of_sequences, input_length, n_features) et
-            (number_of_sequences, output_length, 1)
-    """
-    X, y = [], []
-    for i in range(number_of_sequences):
-        (Xi, yi) = get_Xi_yi(fold, input_length, output_length)
-        X.append(Xi)
-        y.append(yi)
-    return np.array(X), np.array(y)
-
-
-N_TRAIN = 504
-N_TEST  = 48
-
-
-
-"""
-    Construit un jeu de données en faisant glisser une fenêtre à pas fixe sur le fold.
-
-    Args:
-        fold (pd.DataFrame): Un seul fold de la série temporelle.
-        input_length (int): Nombre de pas de temps dans chaque fenêtre X_i.
-        output_length (int): Nombre de pas de temps dans chaque cible y_i.
-        sequence_stride (int): Nombre de pas de temps entre le début de deux séquences consécutives.
-
-    Returns:
-        Tuple[np.ndarray, np.ndarray]: (X, y)
-    """
-def get_X_y_strides(fold, input_length, output_length, sequence_stride, gap=24):
-    X, y = [], []
-    for i in range(0, len(fold), sequence_stride):
-        end = i + input_length + gap + output_length
-        if end >= len(fold):
-            break
-        X.append(fold.iloc[i:i + input_length].values)
-        y.append(fold.iloc[i + input_length + gap:
-                           i + input_length + gap + output_length][[TARGET]].values)
-    return np.array(X), np.array(y)
-
-
-X_train, y_train = get_X_y_strides(fold_train, INPUT_LENGTH, OUTPUT_LENGTH, SEQUENCE_STRIDE)
-X_test,  y_test  = get_X_y_strides(fold_test,  INPUT_LENGTH, OUTPUT_LENGTH, SEQUENCE_STRIDE)
-
-# [FIX-5] Normalisation de y — fitté sur train uniquement
-target_scaler = TargetScaler()
-y_train_scaled = target_scaler.fit_transform(y_train)
-y_test_scaled  = target_scaler.transform(y_test)
-
-print(X_train.shape)
-print(y_train_scaled.shape)
+from sklearn.preprocessing import StandardScaler
+from power_forecast.params import *
+from power_forecast.logic.get_data.build_dataframe import (
+    build_common_dataframe,
+    add_features_RNN,
+)
+from power_forecast.logic.preprocessing.train_test_split import (
+    train_test_split_general,
+    train_test_split_RNN_optimized,
+)
+from power_forecast.logic.preprocessing.split_X_y_standardize import (
+    get_X_y_vectorized_RNN,
+    get_Xi_yi_single_sequence,
+)
+
+
+## PARAMÈTRES DE STRATÉGIE D'ENTRAÎNEMENT
+## ==============================================================
+max_train_test_split = False
+## max_train_test_split (bool) :
+##   - True  → Entraînement sur le maximum de données disponibles.
+##              Le split train/test est ajusté automatiquement selon
+##              l'objective_day. Aucun jeu de validation (X_val, y_val)
+##              ne sera créé. Le modèle utilisera l'objective_day comme
+##              X_new pour la prédiction finale, et les métriques seront
+##              calculées en comparant y_true vs y_pred_xgb.
+##
+##   - False → Split train/test classique basé sur le cutoff_day
+##              (01-01-2023 recommandé). Un jeu de validation
+##              (X_val, y_val) sera également créé plus tard dans le code.
+objective_day = pd.Timestamp("2024-03-20", tz="UTC")
+## objective_day (Timestamp) :
+##   Jour cible de prédiction. Utilisé comme X_new lorsque
+##   max_train_test_split = True.
+
+cutoff_day = pd.Timestamp("2023-10-01", tz="UTC")
+## cutoff_day (Timestamp) :
+##   Date de coupure pour le split train/test classique. Utilisé
+##   uniquement lorsque max_train_test_split = False.
+## ==============================================================
+
+# Other inputs
+input_length = 14 * 24  # 3 weeks context fed to RNN
+stride_sequences = 24 * 3  # doit etre plus haute que output length
+prediction_horizon_days = 2
+country_price_objective = "France"
+#output_length
+prediction_length = prediction_horizon_days * 24  # predict 48h of target day
+
+df_common = build_common_dataframe(
+    filepath="raw_data/all_countries.csv",
+    country_objective=country_price_objective,
+    target_day_distance=prediction_horizon_days,
+    time_interval="h",
+    keep_only_neighbors=True,
+    add_meteo=True,
+    add_crisis=True,
+    add_entsoe=True,
+)
+
+df = add_features_RNN(
+    df=df_common,
+    country_objective=country_price_objective,
+    target_day_distance=prediction_horizon_days,
+    add_future_time_features=True,
+    add_future_meteo=True,
+)
+
+columns_rnn = df.columns
+print(df.shape)
+
+
+# if max_train_test_split = True il train jusqu'a derniere moment possible basè sur objective_day
+if max_train_test_split:
+    # RNN
+    fold_train_rnn, fold_test_rnn = train_test_split_RNN_optimized(
+        df=df,
+        objective_day=objective_day,
+        number_days_to_predict=prediction_horizon_days,
+        input_length=input_length,  # 168h lookback
+    )
+if not max_train_test_split:
+    # RNN
+    fold_train_rnn, fold_test_rnn = train_test_split_general(df=df, cutoff=cutoff_day)
+
+
+scaler = StandardScaler()
+
+
+
+if max_train_test_split:
+    X_train, y_train = get_X_y_vectorized_RNN(
+        fold=fold_train_rnn,
+        feature_cols=fold_train_rnn.columns,
+        country_objective=country_price_objective,
+        stride=stride_sequences,
+        input_length=input_length,
+        output_length=prediction_length,
+        scaler=scaler,
+        fit_scaler=True,
+    )
+
+    # ── Test ───────────────────────────────────────────────────────────────────
+    X_new, y_true = get_X_y_vectorized_RNN(
+        fold=fold_test_rnn,
+        feature_cols=fold_test_rnn.columns,
+        country_objective=country_price_objective,
+        stride=stride_sequences,
+        input_length=input_length,
+        output_length=prediction_length,
+        scaler=scaler,
+        fit_scaler=False,
+    )
+    print("📐 Shapes finales :")
+    print(f"    X_train: {X_train.shape} → (n_seq, input_length, n_features)")
+    print(f"    y_train: {y_train.shape} → (n_seq, output_length)")
+    print(f"    X_new: {X_new.shape} → (1, input_length, n_features)")
+    print(f"    y_true: {y_true.shape}→ (n_seq, output_length)")
+
+# ── Validation : split chronologique SUR LES SÉQUENCES (pas sur le fold brut)
+if not max_train_test_split:
+
+    X_train, y_train = get_X_y_vectorized_RNN(
+        fold=fold_train_rnn,
+        feature_cols=fold_train_rnn.columns,
+        country_objective=country_price_objective,
+        stride=stride_sequences,
+        input_length=input_length,
+        output_length=prediction_length,
+        scaler=scaler,
+        fit_scaler=True,
+    )
+
+    # ── Test ───────────────────────────────────────────────────────────────────
+    X_test, y_test = get_X_y_vectorized_RNN(
+        fold=fold_test_rnn,
+        feature_cols=fold_test_rnn.columns,
+        country_objective=country_price_objective,
+        stride=stride_sequences,
+        input_length=input_length,
+        output_length=prediction_length,
+        scaler=scaler,
+        fit_scaler=False,
+    )
+    val_ratio = 0.2
+    split_idx = int(len(X_train) * (1 - val_ratio))
+
+    X_val = X_train[split_idx:]  # séquences val → suivent chronologiquement train
+    y_val = y_train[split_idx:]
+    X_train = X_train[:split_idx]  # on réduit X_train en conséquence
+    y_train = y_train[:split_idx]
+    print("📐 Shapes finales :")
+    print(f"    X_train: {X_train.shape} → (n_seq, input_length, n_features)")
+    print(f"    y_train: {y_train.shape} → (n_seq, output_length)")
+    print(f"    X_val: {X_val.shape} → (n_seq, input_length, n_features)")
+    print(f"    y_val: {y_val.shape} → (n_seq, output_length)")
+    print(f"    X_test: {X_new.shape} → (1, input_length, n_features)")
+    print(f"    y_test: {y_true.shape}→ (n_seq, output_length)")
+
+input_shape=X_train.shape[1:]
+output_length=y_train.shape[1]
+
+# # ── X_new : dernière séquence du fold_test pour prédiction ────────────────
+X_new = X_test[-1:]  # (1, input_length, n_features) -> deja bon dimension
 
 
 def init_model(X_train: np.ndarray, y_train: np.ndarray) -> tf.keras.Model:
@@ -410,43 +218,9 @@ def init_model(X_train: np.ndarray, y_train: np.ndarray) -> tf.keras.Model:
     # [FIX-1] clipnorm=1.0 : coupe les gradients dont la norme dépasse 1.0
     # Élimine les explosions de gradient (val_loss 31 → 417 observées epoch 13→14)
     adam = optimizers.Adam(learning_rate=0.005, clipnorm=1.0)
-    model.compile(loss='mse', optimizer=adam, metrics=["mae"])
+    model.compile(loss='mae', optimizer=adam, metrics=["mse"])
 
     return model
-
-
-def plot_history(history: tf.keras.callbacks.History):
-    """
-    Affiche les courbes de perte (MSE) et de métrique (MAE) pour l'entraînement et la validation.
-
-    Args:
-        history (tf.keras.callbacks.History): L'objet History retourné par `model.fit()`.
-
-    Returns:
-        np.ndarray: Tableau de deux objets Axes matplotlib.
-    """
-    fig, ax = plt.subplots(1, 2, figsize=(20, 7))
-
-    ax[0].plot(history.history['loss'])
-    ax[0].plot(history.history['val_loss'])
-    ax[0].set_title('MSE')
-    ax[0].set_ylabel('Loss')
-    ax[0].set_xlabel('Epoch')
-    ax[0].legend(['Train', 'Validation'], loc='best')
-    ax[0].grid(axis="x", linewidth=0.5)
-    ax[0].grid(axis="y", linewidth=0.5)
-
-    ax[1].plot(history.history['mae'])
-    ax[1].plot(history.history['val_mae'])
-    ax[1].set_title('MAE')
-    ax[1].set_ylabel('MAE')
-    ax[1].set_xlabel('Epoch')
-    ax[1].legend(['Train', 'Validation'], loc='best')
-    ax[1].grid(axis="x", linewidth=0.5)
-    ax[1].grid(axis="y", linewidth=0.5)
-
-    return ax
-
 
 def fit_model(
     model: tf.keras.Model,
@@ -481,7 +255,7 @@ def fit_model(
 
     history = model.fit(
         X_train, y_train_scaled,
-        validation_split=0.1,
+        validation_data=(X_val,y_val ),
         shuffle=False,
         batch_size=16,
         epochs=100,
@@ -495,28 +269,30 @@ def fit_model(
 # ====================================
 # 1 - Initialisation
 # ====================================
-model = init_model(X_train, y_train_scaled)
+model = init_model(X_train, y_train)
 model.summary()
 
 # ====================================
 # 2 - Entraînement
 # ====================================
-model, history = fit_model(model, X_train, y_train_scaled)
-plot_history(history)
+model, history = fit_model(model, X_train, y_train)
+plot_history_loss_is_mae(history)
 
 # ====================================
 # 3 - Évaluation sur le test set
 #     Les prédictions sont dénormalisées avant calcul de la MAE [FIX-5]
 # ====================================
-y_pred_scaled = model.predict(X_test)
-y_pred = target_scaler.inverse_transform(y_pred_scaled)
-y_test_original = target_scaler.inverse_transform(y_test_scaled)
+# Evaluate model on test set
+loss, mse = model.evaluate(X_test, y_test, verbose=1)
 
-mae_lstm = np.mean(np.abs(y_pred - y_test_original))
+
+y_pred = model.predict(X_test)
+mae_lstm = np.mean(np.abs(y_pred - y_test))
 print(f"The LSTM MAE on the test set is equal to {round(mae_lstm, 2)}")
 
 
-"""
+def init_baseline() -> tf.keras.Model:
+    """
     Construit et compile un modèle baseline naïf de type "dernière valeur observée".
 
     Ce modèle sert de borne inférieure de performance : si le LSTM ne fait pas mieux,
@@ -525,107 +301,297 @@ print(f"The LSTM MAE on the test set is equal to {round(mae_lstm, 2)}")
     Returns:
         tf.keras.Model: Modèle Keras compilé retournant la dernière valeur observée de TARGET.
     """
-fra_idx = list(df_selected.columns).index('FRA')
-
-def init_baseline(fra_idx):
     model = models.Sequential()
-    model.add(layers.Lambda(lambda x: x[:, -1, fra_idx, None]))
+    model.add(layers.Lambda(lambda x: x[:, -1, 1, None]))
+
     adam = optimizers.Adam(learning_rate=0.02)
     model.compile(loss='mse', optimizer=adam, metrics=["mae"])
+
     return model
 
 
 baseline_model   = init_baseline()
-baseline_score   = baseline_model.evaluate(X_test, y_test_original)
+baseline_score   = baseline_model.evaluate(X_test, y_test)
 
 print(f"- The Baseline MAE on the test set is equal to {round(baseline_score[1], 2)}")
 print(f"- The LSTM MAE on the test set is equal to {round(mae_lstm, 2)}")
 print(f"Improvement of the LSTM over the baseline : {round((1 - (mae_lstm / baseline_score[1])) * 100, 2)} %")
 
-print(f'N_FEATURES = {N_FEATURES}')
-print(f'FOLD_LENGTH = {FOLD_LENGTH}')
-print(f'FOLD_STRIDE = {FOLD_STRIDE}')
-print(f'TRAIN_TEST_RATIO = {TRAIN_TEST_RATIO}')
-print(f'N_TRAIN = {N_TRAIN}')
-print(f'N_TEST = {N_TEST}')
-print(f'INPUT_LENGTH = {INPUT_LENGTH}')
-print(f'OUTPUT_LENGTH = {OUTPUT_LENGTH}')
+print(f'N_FEATURES = {len(df.columns)}')
+print(f'SEQUENCE_LENGTH = {input_length}')
+print(f'SEQUENCE_STRIDE = {stride_sequences}')
+print(f'N_TRAIN = {X_train.shape[0]}')
+print(f'N_TEST = {X_test.shape[0]}')
+print(f'INPUT_LENGTH = {input_length}')
+print(f'OUTPUT_LENGTH = {prediction_length}')
 
 
-def cross_validate_baseline_and_lstm():
+def get_folds(
+    df: pd.DataFrame,
+    fold_length: int,
+    fold_stride: int
+) -> List[pd.DataFrame]:
     """
-    Effectue une validation croisée temporelle en comparant le baseline et le modèle LSTM.
+    Parcourt un DataFrame de série temporelle pour en extraire des folds de longueur fixe.
+
+    Args:
+        df           : DataFrame complet de la série temporelle (n_pas, n_features).
+        fold_length  : Nombre de lignes dans chaque fold.
+        fold_stride  : Nombre de lignes à avancer entre deux folds consécutifs.
+
+    Returns:
+        List[pd.DataFrame] : Liste de DataFrames, chacun représentant un fold.
+    """
+    folds = []
+    for idx in range(0, len(df), fold_stride):
+        if (idx + fold_length) > len(df):
+            break
+        folds.append(df.iloc[idx:idx + fold_length])
+    return folds
+
+
+def cross_validate_RNN(
+    df: pd.DataFrame,
+    fold_length: int,
+    fold_stride: int,
+    train_test_ratio: float,
+    feature_cols: list,
+    country_objective: str,
+    stride_sequences: int,
+    input_length: int = INPUT_LENGTH,
+    output_length: int = OUTPUT_LENGTH,
+) -> Tuple[List[float], List[float]]:
+    """
+    Validation croisée temporelle pour un modèle RNN.
 
     Pour chaque fold :
-        1. Division en train/test.
-        2. Normalisation de y_train ; transformation (sans re-fit) de y_test. [FIX-5]
-        3. Évaluation du baseline naïf.
-        4. Entraînement LSTM avec early stopping robuste [FIX-3] + gradient clipping [FIX-1].
-        5. Dénormalisation des prédictions avant calcul de la MAE.
+        1. Split train / test chronologique via train_test_ratio.
+        2. Construction des séquences X/y par fenêtre glissante (leakage-free).
+        3. Standardisation de X (fit sur train, transform sur test).
+        4. Si max_train_test_split=False → split val chronologique sur les séquences.
+        5. Entraînement du modèle RNN avec early stopping.
+        6. Évaluation MAE sur y_true vs y_pred.
+
+    Args:
+        df                : DataFrame complet de la série temporelle.
+        fold_length       : Longueur de chaque fold.
+        fold_stride       : Pas entre deux folds.
+        train_test_ratio  : Proportion train (ex: 0.8).
+        feature_cols      : Colonnes features pour X.
+        country_objective : Pays cible (clé dans VILLE_TO_ISO).
+        stride_sequences  : Stride entre séquences (>= output_length).
+        input_length      : Longueur des séquences X.
+        output_length     : Longueur des séquences y.
 
     Returns:
         Tuple[List[float], List[float]]:
-            - list_of_mae_baseline_model  : MAE du baseline pour chaque fold.
-            - list_of_mae_recurrent_model : MAE du LSTM pour chaque fold.
+            - list_mae_baseline : MAE baseline naïf par fold.
+            - list_mae_rnn      : MAE RNN par fold.
     """
-    list_of_mae_baseline_model  = []
-    list_of_mae_recurrent_model = []
+    list_mae_baseline = []
+    list_mae_rnn      = []
 
-    folds = get_folds(df_selected, FOLD_LENGTH, FOLD_STRIDE)
+    folds = get_folds(df, fold_length, fold_stride)
 
     for fold_id, fold in enumerate(folds):
+        print(f"\n{'='*55}")
+        print(f"  FOLD {fold_id + 1} / {len(folds)}")
+        print(f"{'='*55}")
 
-        # 1 - Division train / test
-        (fold_train, fold_test) = train_test_split(fold, TRAIN_TEST_RATIO, INPUT_LENGTH)
+        # ── 1. Split train / test chronologique ───────────────────────────
+        split_idx  = int(len(fold) * train_test_ratio)
+        fold_train = fold.iloc[:split_idx]
+        fold_test  = fold.iloc[split_idx:]
 
-        X_train, y_train = get_X_y(fold_train, N_TRAIN, INPUT_LENGTH, OUTPUT_LENGTH)
-        X_test,  y_test  = get_X_y(fold_test,  N_TEST,  INPUT_LENGTH, OUTPUT_LENGTH)
+        # ── 2. Construction des séquences + standardisation X ─────────────
+        scaler = StandardScaler()
 
-        # [FIX-5] Normalisation de y — fitté sur y_train uniquement
-        target_scaler   = TargetScaler()
-        y_train_scaled  = target_scaler.fit_transform(y_train)
-        y_test_scaled   = target_scaler.transform(y_test)
-        y_test_original = target_scaler.inverse_transform(y_test_scaled)
+        X_train, y_train = get_X_y_vectorized_RNN(
+            fold              = fold_train,
+            feature_cols      = feature_cols,
+            country_objective = country_objective,
+            stride            = stride_sequences,
+            input_length      = input_length,
+            output_length     = output_length,
+            scaler            = scaler,
+            fit_scaler        = True,
+        )
 
-        # 2a - Baseline évalué sur les valeurs originales (non normalisées)
-        baseline_model = init_baseline()
-        mae_baseline   = baseline_model.evaluate(X_test, y_test_original, verbose=0)[1]
-        list_of_mae_baseline_model.append(mae_baseline)
-        print("-" * 50)
-        print(f"MAE baseline fold n°{fold_id} = {round(mae_baseline, 2)}")
+        X_test, y_true = get_X_y_vectorized_RNN(
+            fold              = fold_test,
+            feature_cols      = feature_cols,
+            country_objective = country_objective,
+            stride            = stride_sequences,
+            input_length      = input_length,
+            output_length     = output_length,
+            scaler            = scaler,
+            fit_scaler        = False,
+        )
 
-        # 2b - LSTM : entraînement sur y normalisé
-        model = init_model(X_train, y_train_scaled)
+        # ── 3. Split val chronologique sur les séquences (si demandé) ─────
+        if not max_train_test_split:
+            val_ratio = 0.2
+            split_val = int(len(X_train) * (1 - val_ratio))
+            X_val    = X_train[split_val:]
+            y_val    = y_train[split_val:]
+            X_train  = X_train[:split_val]
+            y_train  = y_train[:split_val]
+            validation_data = (X_val, y_val)
+        else:
+            validation_data = None
+
+        print(f"    X_train : {X_train.shape} | y_train : {y_train.shape}")
+        if not max_train_test_split:
+            print(f"    X_val   : {X_val.shape}   | y_val   : {y_val.shape}")
+        print(f"    X_test  : {X_test.shape}  | y_true  : {y_true.shape}")
+
+        # ── 4. Baseline naïf ──────────────────────────────────────────────
+        # dernière valeur connue de X répétée sur output_length
+        y_pred_baseline = np.repeat(
+            X_test[:, -1, feature_cols.get_loc(VILLE_TO_ISO[country_objective])].reshape(-1, 1),
+            output_length, axis=1
+        )
+        mae_baseline = float(np.mean(np.abs(y_pred_baseline - y_true)))
+        list_mae_baseline.append(mae_baseline)
+        print(f"\n  MAE baseline fold {fold_id + 1} : {mae_baseline:.2f}")
+
+        # ── 5. Entraînement RNN ───────────────────────────────────────────
+        model = init_model(X_train, y_train)
 
         es = EarlyStopping(
-            # [FIX-3] monitor=val_loss + patience=5 (vs patience=2 + val_mae avant)
-            # val_loss est plus stable ; patience=2 stoppait trop tôt sur les folds volatils
-            monitor="val_loss",
+            monitor="val_loss" if validation_data else "loss",
             mode="min",
-            patience=20,
-            restore_best_weights=True
+            patience=5,
+            restore_best_weights=True,
         )
 
         model.fit(
-            X_train, y_train_scaled,
-            validation_split=0.1,
-            shuffle=False,
-            batch_size=16,
-            epochs=100,
-            callbacks=[es],
-            verbose=0
+            X_train, y_train,
+            validation_data = validation_data,
+            shuffle          = False,         # timeseries → pas de shuffle
+            batch_size       = 16,
+            epochs           = 100,
+            callbacks        = [es],
+            verbose          = 0,
         )
 
-        # [FIX-5] Dénormalisation avant calcul de la MAE
-        y_pred_scaled = model.predict(X_test, verbose=0)
-        y_pred        = target_scaler.inverse_transform(y_pred_scaled)
-        mae_lstm      = float(np.mean(np.abs(y_pred - y_test_original)))
-        list_of_mae_recurrent_model.append(mae_lstm)
+        # ── 6. Évaluation ─────────────────────────────────────────────────
+        y_pred   = model.predict(X_test, verbose=0)
+        mae_rnn  = float(np.mean(np.abs(y_pred - y_true)))
+        list_mae_rnn.append(mae_rnn)
 
-        print(f"MAE LSTM fold n°{fold_id} = {round(mae_lstm, 2)}")
-        print(f"Improvement over baseline: {round((1 - (mae_lstm / mae_baseline)) * 100, 2)} %\n")
+        improvement = (1 - mae_rnn / mae_baseline) * 100
+        print(f"  MAE RNN   fold {fold_id + 1} : {mae_rnn:.2f}")
+        print(f"  Amélioration vs baseline     : {improvement:.2f} %")
 
-    return list_of_mae_baseline_model, list_of_mae_recurrent_model
+    print(f"\n{'='*55}")
+    print(f"  MAE baseline moyenne : {np.mean(list_mae_baseline):.2f}")
+    print(f"  MAE RNN moyenne      : {np.mean(list_mae_rnn):.2f}")
+    print(f"{'='*55}\n")
+
+    return list_mae_baseline, list_mae_rnn
+
+# def get_folds(
+#     df: pd.DataFrame,
+#     fold_length: int,
+#     fold_stride: int) -> List[pd.DataFrame]:
+#     """
+#     Parcourt un DataFrame de série temporelle pour en extraire des folds de longueur fixe.
+
+#     Chaque fold est une fenêtre contiguë de `fold_length` lignes extraite du DataFrame.
+#     La fenêtre avance de `fold_stride` lignes à chaque itération.
+#     Toute fenêtre qui dépasserait la fin du DataFrame est ignorée.
+
+#     Args:
+#         df (pd.DataFrame): Le DataFrame complet de la série temporelle, de forme (n_pas, n_features).
+#         fold_length (int): Nombre de lignes (pas de temps) dans chaque fold.
+#         fold_stride (int): Nombre de lignes à avancer entre deux folds consécutifs.
+
+#     Returns:
+#         List[pd.DataFrame]: Liste de DataFrames, chacun représentant un fold.
+#     """
+#     folds = []
+#     for idx in range(0, len(df), fold_stride):
+#         if (idx + fold_length) > len(df):
+#             break
+#         fold = df.iloc[idx:idx + fold_length, :]
+#         folds.append(fold)
+#     return folds
+
+# def cross_validate_baseline_and_lstm():
+#     """
+#     Effectue une validation croisée temporelle en comparant le baseline et le modèle LSTM.
+
+#     Pour chaque fold :
+#         1. Division en train/test.
+#         2. Normalisation de y_train ; transformation (sans re-fit) de y_test. [FIX-5]
+#         3. Évaluation du baseline naïf.
+#         4. Entraînement LSTM avec early stopping robuste [FIX-3] + gradient clipping [FIX-1].
+#         5. Dénormalisation des prédictions avant calcul de la MAE.
+
+#     Returns:
+#         Tuple[List[float], List[float]]:
+#             - list_of_mae_baseline_model  : MAE du baseline pour chaque fold.
+#             - list_of_mae_recurrent_model : MAE du LSTM pour chaque fold.
+#     """
+#     list_of_mae_baseline_model  = []
+#     list_of_mae_recurrent_model = []
+
+#     folds = get_folds(df_selected, FOLD_LENGTH, FOLD_STRIDE)
+
+#     for fold_id, fold in enumerate(folds):
+
+#         # 1 - Division train / test
+#         (fold_train, fold_test) = train_test_split(fold, TRAIN_TEST_RATIO, INPUT_LENGTH)
+
+#         X_train, y_train = get_X_y(fold_train, N_TRAIN, INPUT_LENGTH, OUTPUT_LENGTH)
+#         X_test,  y_test  = get_X_y(fold_test,  N_TEST,  INPUT_LENGTH, OUTPUT_LENGTH)
+
+#         # [FIX-5] Normalisation de y — fitté sur y_train uniquement
+#         target_scaler   = TargetScaler()
+#         y_train_scaled  = target_scaler.fit_transform(y_train)
+#         y_test_scaled   = target_scaler.transform(y_test)
+#         y_test_original = target_scaler.inverse_transform(y_test_scaled)
+
+#         # 2a - Baseline évalué sur les valeurs originales (non normalisées)
+#         baseline_model = init_baseline()
+#         mae_baseline   = baseline_model.evaluate(X_test, y_test_original, verbose=0)[1]
+#         list_of_mae_baseline_model.append(mae_baseline)
+#         print("-" * 50)
+#         print(f"MAE baseline fold n°{fold_id} = {round(mae_baseline, 2)}")
+
+#         # 2b - LSTM : entraînement sur y normalisé
+#         model = init_model(X_train, y_train_scaled)
+
+#         es = EarlyStopping(
+#             # [FIX-3] monitor=val_loss + patience=5 (vs patience=2 + val_mae avant)
+#             # val_loss est plus stable ; patience=2 stoppait trop tôt sur les folds volatils
+#             monitor="val_loss",
+#             mode="min",
+#             patience=5,
+#             restore_best_weights=True
+#         )
+
+#         model.fit(
+#             X_train, y_train_scaled,
+#             validation_split=0.1,
+#             shuffle=False,
+#             batch_size=16,
+#             epochs=100,
+#             callbacks=[es],
+#             verbose=0
+#         )
+
+#         # [FIX-5] Dénormalisation avant calcul de la MAE
+#         y_pred_scaled = model.predict(X_test, verbose=0)
+#         y_pred        = target_scaler.inverse_transform(y_pred_scaled)
+#         mae_lstm      = float(np.mean(np.abs(y_pred - y_test_original)))
+#         list_of_mae_recurrent_model.append(mae_lstm)
+
+#         print(f"MAE LSTM fold n°{fold_id} = {round(mae_lstm, 2)}")
+#         print(f"Improvement over baseline: {round((1 - (mae_lstm / mae_baseline)) * 100, 2)} %\n")
+
+#     return list_of_mae_baseline_model, list_of_mae_recurrent_model
 
 
-mae_baselines, mae_lstms = cross_validate_baseline_and_lstm()
+# mae_baselines, mae_lstms = cross_validate_baseline_and_lstm()
