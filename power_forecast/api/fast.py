@@ -26,7 +26,7 @@ XGB_MODEL_NAME    = "model_xgb_130f"
 XGB_MODEL_PATH    = MODELS_DIR / XGB_MODEL_NAME
 XGB_N_FEATURES    = 130
 
-RNN_MODEL_NAME    = "model_336h_57f.keras"
+RNN_MODEL_NAME    = "model_lstm_3weeks_57f_wed.keras"
 RNN_MODEL_PATH    = MODELS_DIR / RNN_MODEL_NAME
 RNN_N_FEATURES    = 57
 
