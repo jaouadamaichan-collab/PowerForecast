@@ -84,9 +84,15 @@ def load_model_ml(model_name: str = None):
 #     return scaler
 
 
-def save_df(df, name):
+def save_df_topickle(df):
     os.makedirs(LOCAL_REGISTRY_PATH_DF, exist_ok=True)
-    path = os.path.join(LOCAL_REGISTRY_PATH_DF, f"{name}.pkl")
+
+    start_date = df.index.min().strftime("%Y-%m-%d")
+    end_date = df.index.max().strftime("%Y-%m-%d")
+
+    filename = f"{start_date}_to_{end_date}.pkl"
+    path = os.path.join(LOCAL_REGISTRY_PATH_DF, filename)
+
     df.to_pickle(path)
     print(f"✅ DataFrame saved locally: {path}")
 

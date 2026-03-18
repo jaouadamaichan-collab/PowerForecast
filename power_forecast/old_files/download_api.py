@@ -11,7 +11,7 @@ from power_forecast.logic.get_data.time_features import (
     add_lag_and_contexte_features_frontiere,
     filter_neighbor_columns,
     add_crisis_column)
-from power_forecast.logic.models. registry import load_df, save_df
+from power_forecast.logic.models. registry import load_df, save_df_topickle
 from power_forecast.logic.get_data.meteo import get_meteo
 from power_forecast.params import *
 from power_forecast.logic.get_data.kaggle_df import create_df_from_local_csv
